@@ -1,3 +1,8 @@
+from search_service import (
+    ingest_documents,
+    search_documents,
+    ingest_sharepoint_documents,
+)
 import os
 from pathlib import Path
 
@@ -139,4 +144,15 @@ def chat(request: ChatRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Chat request failed: {exc}",
+        ) from exc
+
+
+@app.post("/sharepoint/sync")
+def sync_sharepoint():
+    try:
+        return ingest_sharepoint_documents()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"SharePoint sync failed: {exc}",
         ) from exc

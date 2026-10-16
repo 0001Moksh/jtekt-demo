@@ -128,6 +128,101 @@ def create_index() -> None:
         print(f"Using existing index: {INDEX_NAME}")
 
 
+
+def ingest_sharepoint_documents() -> dict:
+    """Download JTEKT files from SharePoint and index their content."""
+    from sharepoint_service import download_jtekt_documents
+
+    files = download_jtekt_documents()
+    create_index()
+
+    uploaded = 0
+    failures = []
+
+    for item in files:
+        try:
+            document_id = hashlib.sha256(
+                item["item_id"].encode("utf-8")
+            ).hexdigest()
+
+            chunks_to_upload = []
+
+            for page in extract_text(item["path"]):
+                chunks = chunk_text(page["text"])
+
+                for index, text in enumerate(chunks):
+                    if not text.strip():
+                        continue
+
+                    chunk_id = f"{document_id}:{page['location']}:{index}"
+                    stable_chunk_id = hashlib.sha256(
+                        chunk_id.encode("utf-8")
+                    ).hexdigest()
+
+                    vector = embedding_model.encode(
+                        text, normalize_embeddings=True
+                    ).tolist()
+
+                    chunks_to_upload.append({
+                        "id": stable_chunk_id,
+                        "content": text,
+                        "source_file": item["name"],
+                        "source_url": item["source_url"],
+                        "location": page["location"],
+                        "chunk_id": str(index),
+                        "document_id": document_id,
+                        "content_vector": vector,
+                    })
+
+            if not chunks_to_upload:
+                failures.append({
+                    "file": item["name"],
+                    "error": "No extractable text found",
+                })
+                continue
+
+            # Remove old chunks for this same SharePoint file so that
+            # shorter updated versions do not leave stale extra chunks.
+            old_chunks = search_client.search(
+                search_text="*",
+                filter=f"document_id eq '{document_id}'",
+                select=["id"],
+                top=1000,
+            )
+            old_ids = [{"id": row["id"]} for row in old_chunks]
+
+            for start in range(0, len(old_ids), 100):
+                search_client.delete_documents(
+                    documents=old_ids[start:start + 100]
+                )
+
+            for start in range(0, len(chunks_to_upload), 100):
+                batch = chunks_to_upload[start:start + 100]
+                results = search_client.upload_documents(
+                    documents=batch
+                )
+
+                for result in results:
+                    if result.succeeded:
+                        uploaded += 1
+                    else:
+                        failures.append({
+                            "file": item["name"],
+                            "error": result.error_message,
+                        })
+
+        except Exception as exc:
+            failures.append({
+                "file": item["name"],
+                "error": str(exc),
+            })
+
+    return {
+        "files_found": len(files),
+        "chunks_uploaded": uploaded,
+        "failures": failures,
+    }
+
 def ingest_documents(documents_dir: Path) -> dict:
     """Extract, chunk, embed and upload local PDF/PPTX files."""
     if not documents_dir.exists():
