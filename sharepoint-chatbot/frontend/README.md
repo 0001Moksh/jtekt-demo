@@ -2,6 +2,10 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
+The Sources panel includes document previews for indexed PDF and PowerPoint (`.pptx`) files.
+The preview API serves files from the configured documents directory and the SharePoint cache.
+Install frontend dependencies from this directory with `npm install`.
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)

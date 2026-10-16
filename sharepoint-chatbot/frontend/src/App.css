@@ -240,6 +240,17 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .panel-row { display: flex; align-items: flex-start; justify-content: space-between; }
 .panel-body .source-card { max-width: none; }
 .empty-hint { font-size: 12px; color: var(--mute); line-height: 1.6; padding: 6px; }
+.document-preview { display: flex; flex-direction: column; gap: 12px; min-height: 100%; }
+.preview-heading { display: flex; align-items: center; gap: 8px; padding: 4px 2px; }
+.preview-heading strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.preview-heading a { display: flex; color: var(--mute); }
+.preview-heading a:hover { color: var(--accent); }
+.pdf-preview { flex: 1; width: 100%; min-height: 420px; border: 0; border-radius: 12px; background: #fff; box-shadow: var(--raise-sm); }
+.pptx-preview { width: 100%; min-height: 320px; overflow: auto; border-radius: 12px; background: var(--bg); }
+.pptx-preview [data-slide-index] { margin: 0 auto 16px; }
+.preview-status, .preview-error { margin: 0; padding: 10px; border-radius: 10px; font-size: 12px; line-height: 1.5; }
+.preview-status { color: var(--mute); }
+.preview-error { color: var(--err); }
 .note-card { padding: 14px; border-radius: 16px; margin-bottom: 18px; animation: rise .4s ease both; }
 .note-text { font-size: 12px; line-height: 1.7; max-height: 170px; overflow: hidden; mask-image: linear-gradient(#000 75%, transparent); }
 .note-text > :first-child { margin-top: 0; }

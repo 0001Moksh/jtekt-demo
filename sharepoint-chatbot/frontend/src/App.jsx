@@ -7,7 +7,7 @@ import {
   ExternalLink, Trash2, Sun, Moon, Copy, Check, RefreshCw, ThumbsUp,
   ThumbsDown, Mic, Volume2, Square, Search, Pin, StickyNote, Download,
   Library, WandSparkles, X, ListChecks, CircleHelp, Clock, GraduationCap,
-  BookOpen, Pencil
+  BookOpen, Pencil, Eye
 } from "lucide-react";
 import "./App.css";
 
@@ -15,6 +15,91 @@ const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8003";
 const CHATS_KEY = "documind-chats";
 const NOTES_KEY = "documind-notes";
 const THEME_KEY = "documind-theme";
+
+function DocumentPreview({ source, apiBaseUrl }) {
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [container, setContainer] = useState(null);
+  const extension = source?.source_file?.split(".").pop()?.toLowerCase();
+  const documentUrl = source
+    ? `${apiBaseUrl}/documents/${encodeURIComponent(source.source_file)}`
+    : "";
+
+  useEffect(() => {
+    if (!documentUrl || extension !== "pptx" || !container) return undefined;
+
+    const controller = new AbortController();
+    let viewer;
+
+    async function renderPresentation() {
+      try {
+        const response = await fetch(documentUrl, { signal: controller.signal });
+        if (!response.ok) {
+          const detail = await response.json().catch(() => ({}));
+          throw new Error(detail.detail || "Could not load the presentation.");
+        }
+        const buffer = await response.arrayBuffer();
+        if (controller.signal.aborted) return;
+        const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import("@aiden0z/pptx-renderer");
+        const openedViewer = await PptxViewer.open(buffer, container, {
+          width: Math.max(280, container.clientWidth - 24),
+          fitMode: "contain",
+          zipLimits: RECOMMENDED_ZIP_LIMITS,
+          lazyMedia: true,
+          lazySlides: true,
+          renderMode: "list",
+          listOptions: { windowed: true, showSlideLabels: true },
+          scrollContainer: container
+        });
+        if (controller.signal.aborted) {
+          openedViewer.destroy();
+          return;
+        }
+        viewer = openedViewer;
+        setLoading(false);
+      } catch (previewError) {
+        if (!controller.signal.aborted) {
+          setError(previewError.message);
+          setLoading(false);
+        }
+      }
+    }
+
+    renderPresentation();
+    return () => {
+      controller.abort();
+      viewer?.destroy();
+    };
+  }, [container, documentUrl, extension]);
+
+  if (!source) {
+    return <p className="empty-hint">Choose a document from Sources to preview it here.</p>;
+  }
+
+  return (
+    <section className="document-preview">
+      <div className="preview-heading">
+        <strong title={source.source_file}>{source.source_file}</strong>
+        {source.source_url && (
+          <a href={source.source_url} target="_blank" rel="noreferrer" title="Open original document">
+            <ExternalLink size={15} />
+          </a>
+        )}
+      </div>
+      {extension === "pdf" ? (
+        <iframe className="pdf-preview" src={documentUrl} title={`Preview of ${source.source_file}`} />
+      ) : extension === "pptx" ? (
+        <>
+          {loading && <p className="preview-status">Loading presentation…</p>}
+          {error && <p className="preview-error" role="alert">{error}</p>}
+          <div className="pptx-preview" ref={setContainer} />
+        </>
+      ) : (
+        <p className="preview-error">Preview is available for PDF and PowerPoint documents.</p>
+      )}
+    </section>
+  );
+}
 
 const suggestions = [
   "Summarize the key points in the documents.",
@@ -85,6 +170,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
   const [tab, setTab] = useState("sources");
+  const [selectedSource, setSelectedSource] = useState(null);
   const [apiOnline, setApiOnline] = useState(false);
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState("");
@@ -625,6 +711,7 @@ export default function App() {
         <div className="panel-inner">
           <div className="tabs neu-in">
             {[
+              ["preview", Eye, "Preview"],
               ["sources", Library, "Sources"],
               ["notes", StickyNote, "Notes"],
               ["studio", WandSparkles, "Studio"]
@@ -636,6 +723,10 @@ export default function App() {
           </div>
 
           <div className="panel-body" key={tab}>
+            {tab === "preview" && (
+              <DocumentPreview source={selectedSource} apiBaseUrl={API} />
+            )}
+
             {tab === "sources" && (
               <>
                 <p className="panel-lead">Documents cited in this conversation.</p>
@@ -647,6 +738,18 @@ export default function App() {
                       <strong>{s.key}</strong>
                       <span>Cited {s.count}× {s.locations.size ? `· ${[...s.locations].slice(0, 2).join(", ")}` : ""}</span>
                     </div>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      title={`Preview ${s.key}`}
+                      aria-label={`Preview ${s.key}`}
+                      onClick={() => {
+                        setSelectedSource(s);
+                        setTab("preview");
+                      }}
+                    >
+                      <Eye size={15} />
+                    </button>
                     {s.source_url && (
                       <a href={s.source_url} target="_blank" rel="noreferrer" title="Open source document">
                         <ExternalLink size={15} />

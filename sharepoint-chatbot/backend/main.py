@@ -4,11 +4,13 @@ from search_service import (
     ingest_sharepoint_documents,
 )
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from groq import Groq
 
@@ -63,6 +65,54 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/documents/{filename}")
+def preview_document(filename: str):
+    extension = Path(filename).suffix.lower()
+    if (
+        Path(filename).name != filename
+        or "/" in filename
+        or "\\" in filename
+        or extension not in {".pdf", ".pptx"}
+    ):
+        raise HTTPException(status_code=400, detail="Unsupported document.")
+
+    candidates = []
+    documents_root = documents_path.resolve()
+    candidates.extend(
+        path for path in documents_root.rglob(filename)
+        if path.is_file() and path.resolve().is_relative_to(documents_root)
+    )
+
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
+    sharepoint_cache = BASE_DIR / ".cache" / "sharepoint"
+    if sharepoint_cache.is_dir():
+        candidates.extend(
+            path for path in sharepoint_cache.glob(f"*_{safe_name}")
+            if path.is_file()
+            and path.resolve().is_relative_to(sharepoint_cache.resolve())
+        )
+
+    if not candidates:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if len(candidates) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Multiple documents have this filename; preview is ambiguous.",
+        )
+
+    media_type = (
+        "application/pdf"
+        if extension == ".pdf"
+        else "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+    return FileResponse(
+        candidates[0],
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type="inline",
+    )
 
 
 @app.post("/ingest")
