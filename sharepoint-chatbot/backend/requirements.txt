@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+azure-search-documents
+sentence-transformers
+pymupdf
+python-pptx
+groq
