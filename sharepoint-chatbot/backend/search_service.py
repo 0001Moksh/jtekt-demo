@@ -1,5 +1,4 @@
 import os
-import uuid
 from pathlib import Path
 import hashlib
 
@@ -30,6 +29,7 @@ from document_processor import (
     chunk_page,
     stable_document_id,
 )
+from rag_utils import rerank_search_results
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -525,13 +525,14 @@ def search_documents(query: str, top_k: int = 5) -> list[dict]:
     if not query.strip():
         raise ValueError("Query cannot be empty")
 
+    candidate_count = min(50, max(20, top_k * 5))
     vector = embedding_model.encode(
         query, normalize_embeddings=True
     ).tolist()
 
     vector_query = VectorizedQuery(
         vector=vector,
-        k_nearest_neighbors=top_k,
+        k_nearest_neighbors=candidate_count,
         fields="content_vector",
     )
 
@@ -546,19 +547,22 @@ def search_documents(query: str, top_k: int = 5) -> list[dict]:
         search_text=query,
         vector_queries=[vector_query],
         select=[
+            "id",
             "content",
             "source_file",
             "source_url",
             "location",
             "section",
             "chunk_id",
+            "document_id",
         ],
-        top=top_k,
+        top=candidate_count,
         **search_options,
     )
 
-    return [
+    candidates = [
         {
+            "id": result["id"],
             "content": result["content"],
             "source_file": result["source_file"],
             "source_url": result.get("source_url", ""),
@@ -570,3 +574,4 @@ def search_documents(query: str, top_k: int = 5) -> list[dict]:
         }
         for result in results
     ]
+    return rerank_search_results(query, candidates, top_k)
