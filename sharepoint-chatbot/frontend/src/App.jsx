@@ -11,10 +11,25 @@ import {
 } from "lucide-react";
 import "./App.css";
 
-const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8003";
+const API = import.meta.env.VITE_API_BASE_URL && !import.meta.env.DEV 
+  ? import.meta.env.VITE_API_BASE_URL 
+  : `http://${window.location.hostname}:8003`;
 const CHATS_KEY = "documind-chats";
 const NOTES_KEY = "documind-notes";
 const THEME_KEY = "documind-theme";
+
+// Works on HTTP + IP (non-secure contexts) where crypto.randomUUID is missing
+function uuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // Fallback UUID v4
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 function DocumentPreview({ source, apiBaseUrl }) {
   const [error, setError] = useState("");
@@ -27,10 +42,8 @@ function DocumentPreview({ source, apiBaseUrl }) {
 
   useEffect(() => {
     if (!documentUrl || extension !== "pptx" || !container) return undefined;
-
     const controller = new AbortController();
     let viewer;
-
     async function renderPresentation() {
       try {
         const response = await fetch(documentUrl, { signal: controller.signal });
@@ -64,7 +77,6 @@ function DocumentPreview({ source, apiBaseUrl }) {
         }
       }
     }
-
     renderPresentation();
     return () => {
       controller.abort();
@@ -129,7 +141,7 @@ const load = (key, fallback) => {
 };
 
 const makeChat = () => ({
-  id: crypto.randomUUID(),
+  id: uuid(),
   title: "New chat",
   messages: [],
   createdAt: Date.now()
@@ -217,6 +229,7 @@ export default function App() {
   const scrollBottom = () => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   };
+
   useEffect(() => {
     scrollBottom();
   }, [messages.length, loading]);
@@ -278,20 +291,17 @@ export default function App() {
   async function ask(question, { addUser = true } = {}) {
     if (!question || loading || !activeChat) return;
     const chatId = activeChat.id;
-
     if (addUser) {
-      const userMessage = { id: crypto.randomUUID(), role: "user", content: question };
+      const userMessage = { id: uuid(), role: "user", content: question };
       updateChat(chatId, (chat) => ({
         ...chat,
         title: chat.messages.length ? chat.title : question.slice(0, 42),
         messages: [...chat.messages, userMessage]
       }));
     }
-
     setInput("");
     setError("");
     setLoading(true);
-
     try {
       const response = await fetch(`${API}/chat`, {
         method: "POST",
@@ -300,9 +310,8 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "The request could not be completed.");
-
       const reply = {
-        id: crypto.randomUUID(),
+        id: uuid(),
         role: "assistant",
         content: data.answer || "No answer was returned.",
         sources: Array.isArray(data.sources) ? data.sources : [],
@@ -349,7 +358,7 @@ export default function App() {
 
   function pinNote(message) {
     setNotes((prev) => [
-      { id: crypto.randomUUID(), text: message.content, chat: activeChat.title, at: Date.now() },
+      { id: uuid(), text: message.content, chat: activeChat.title, at: Date.now() },
       ...prev
     ]);
     setPanelOpen(true);
@@ -426,16 +435,13 @@ export default function App() {
               <span>Document AI Assistant</span>
             </div>
           </div>
-
           <button className="new-chat-button neu-btn" onClick={newChat}>
             <Plus size={18} /> New chat
           </button>
-
           <label className="search-box neu-in">
             <Search size={15} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search conversations" />
           </label>
-
           <div className="history-heading">Your conversations</div>
           <div className="history-list">
             {filteredChats.length === 0 && <p className="empty-hint">No conversations match your search.</p>}
@@ -482,7 +488,6 @@ export default function App() {
               </div>
             ))}
           </div>
-
           <div className="sidebar-footer">
             <div className={`status-dot ${apiOnline ? "online" : ""}`} />
             <span>{apiOnline ? "Backend connected" : "Backend unavailable"}</span>
@@ -546,10 +551,8 @@ export default function App() {
                   <div className={`avatar neu ${message.role}`}>
                     {message.role === "assistant" ? <Bot size={18} /> : <User size={18} />}
                   </div>
-
                   <div className="message-body">
                     <div className="message-author">{message.role === "assistant" ? "Document AI" : "You"}</div>
-
                     {message.role === "assistant" ? (
                       <div className="markdown-content">
                         <Typed text={message.content} fresh={message.fresh} onTick={scrollBottom} />
@@ -557,7 +560,6 @@ export default function App() {
                     ) : (
                       <div className="user-message">{message.content}</div>
                     )}
-
                     {message.role === "assistant" && (
                       <div className="message-actions">
                         <button className="icon-button" title="Copy" onClick={() => copyText(message.content, message.id)}>
@@ -594,34 +596,33 @@ export default function App() {
                         )}
                       </div>
                     )}
-
                     {message.role === "assistant" && message.sources?.length > 0 && (
-                      <div className="sources" style={{ marginTop: '8px' }}>
-                        <div className="sources-title" style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', opacity: 0.8 }}>
+                      <div className="sources" style={{ marginTop: "8px" }}>
+                        <div className="sources-title" style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", opacity: 0.8 }}>
                           <FileText size={14} /> Sources used
                         </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                           {message.sources.map((source, index) => (
                             <div
                               key={`${source.source_file}-${source.location}-${index}`}
                               className="source-card neu-in"
                               style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                padding: '4px 8px',
-                                borderRadius: '6px',
-                                fontSize: '12px',
-                                maxWidth: '180px',
-                                background: 'rgba(0,0,0,0.03)'
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "4px 8px",
+                                borderRadius: "6px",
+                                fontSize: "12px",
+                                maxWidth: "180px",
+                                background: "rgba(0,0,0,0.03)"
                               }}
                             >
                               <FileText size={13} style={{ flexShrink: 0 }} />
-                              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                <span style={{ fontWeight: 500, display: 'inline' }}>{source.source_file || `Source ${index + 1}`}</span>
+                              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                <span style={{ fontWeight: 500, display: "inline" }}>{source.source_file || `Source ${index + 1}`}</span>
                               </div>
                               {source.source_url && (
-                                <a href={source.source_url} target="_blank" rel="noreferrer" title="Open" style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                <a href={source.source_url} target="_blank" rel="noreferrer" title="Open" style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
                                   <ExternalLink size={12} />
                                 </a>
                               )}
@@ -630,7 +631,6 @@ export default function App() {
                         </div>
                       </div>
                     )}
-
                     {message.id === lastAssistantId && !loading && (
                       <div className="followups">
                         {(message.followUps || defaultFollowUps).map((q) => (
@@ -641,7 +641,6 @@ export default function App() {
                   </div>
                 </article>
               ))}
-
               {loading && (
                 <div className="message-row assistant">
                   <div className="avatar neu assistant pulse"><Bot size={18} /></div>
@@ -658,7 +657,6 @@ export default function App() {
               <div ref={bottomRef} />
             </div>
           )}
-
           {error && (
             <div className="error-banner neu-in">
               <AlertCircle size={17} />
@@ -721,12 +719,10 @@ export default function App() {
               </button>
             ))}
           </div>
-
           <div className="panel-body" key={tab}>
             {tab === "preview" && (
               <DocumentPreview source={selectedSource} apiBaseUrl={API} />
             )}
-
             {tab === "sources" && (
               <>
                 <p className="panel-lead">Documents cited in this conversation.</p>
@@ -759,7 +755,6 @@ export default function App() {
                 ))}
               </>
             )}
-
             {tab === "notes" && (
               <>
                 <div className="panel-row">
@@ -781,7 +776,6 @@ export default function App() {
                 ))}
               </>
             )}
-
             {tab === "studio" && (
               <>
                 <p className="panel-lead">Turn your documents into ready-made outputs.</p>
