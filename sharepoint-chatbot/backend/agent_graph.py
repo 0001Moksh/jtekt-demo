@@ -49,11 +49,57 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 @tool
+def prepare_query(question: str, conversation_context: str) -> str:
+    """
+    Turn a document question into a focused standalone search query.
+    Use recent conversation context to resolve references such as "it",
+    "after that", or "give an example", without adding unsupported facts.
+
+    Args:
+        question: The current user question.
+        conversation_context: Relevant prior user and assistant messages.
+    """
+    model = os.getenv("LITELLM_MODEL", "groq/openai/gpt-oss-20b")
+    api_key = os.getenv("GROQ_API_KEY") or os.getenv("LITELLM_API_KEY")
+    response = completion(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Rewrite the current question as one concise, standalone "
+                    "search query for a company document index. Use prior "
+                    "conversation only to resolve references and preserve "
+                    "specific names, models, and terminology. Do not answer "
+                    "the question or add facts. Return only the search query."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Relevant conversation:\n{conversation_context[-12000:] or '(none)'}"
+                    f"\n\nCurrent question:\n{question}"
+                ),
+            },
+        ],
+        api_key=api_key,
+        temperature=0,
+        max_tokens=256,
+    )
+    query = response.choices[0].message.content
+    if not query or not query.strip():
+        raise RuntimeError("Query preparation returned no search query.")
+    return query.strip()
+
+
+@tool
 def rag_search(query: str, top_k: int = 5) -> str:
     """
     Retrieve relevant document chunks from the indexed knowledge base
     (local documents + SharePoint cache). Use this whenever the user
     asks about company documents, policies, presentations, PDFs, etc.
+    For document questions, first call prepare_query with the current
+    question and relevant conversation context, then search using its result.
 
     Args:
         query: Natural language search query.
@@ -69,10 +115,18 @@ def rag_search(query: str, top_k: int = 5) -> str:
     for i, r in enumerate(results):
         chunks.append(
             {
-                "id": i + 1,
+                "id": r.get("id") or (
+                    f"{r.get('source_file') or r.get('filename') or 'source'}:"
+                    f"{r.get('location') or ''}:{r.get('chunk_id') or i + 1}"
+                ),
                 "content": r.get("content") or r.get("text") or str(r),
                 "source": r.get("source") or r.get("filename") or r.get("path") or "unknown",
                 "score": r.get("score"),
+                **{
+                    k: v
+                    for k, v in r.items()
+                    if k not in ("id", "content", "text", "score", "source")
+                },
                 "metadata": {
                     k: v
                     for k, v in r.items()
@@ -111,7 +165,7 @@ def general_query(question: str) -> str:
     return resp.choices[0].message.content or ""
 
 
-TOOLS = [rag_search, general_query]
+TOOLS = [prepare_query, rag_search, general_query]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 
@@ -131,14 +185,23 @@ class AgentState(TypedDict):
 
 SYSTEM_PROMPT = """You are a helpful document assistant.
 
-You have two tools:
-1. rag_search – use this to fetch relevant chunks from the company document index
-   (PDFs, PowerPoints, SharePoint, etc.). Always prefer this for any question
-   that might be answered from documents.
-2. general_query – only for pure general knowledge / reasoning that clearly
+You have three tools:
+1. prepare_query – rewrite a document question into a focused standalone
+   search query using relevant conversation context.
+2. rag_search – fetch relevant chunks from the company document index
+   (PDFs, PowerPoints, SharePoint, etc.).
+3. general_query – only for pure general knowledge / reasoning that clearly
    does not need documents.
 
 Rules:
+- Use earlier messages in this conversation to understand follow-ups and references.
+- For document facts, verify with rag_search; earlier assistant answers are not evidence.
+- For every question that may be answered by company documents, first call
+  prepare_query with the current question and the relevant recent conversation
+  turns (or "(none)" for a new thread), then call rag_search with exactly the
+  prepared query.
+- Do not call rag_search directly for document questions or answer from memory
+  without retrieving document chunks.
 - Call tools when you need information. You may call the same tool multiple times
   with different queries if needed.
 - After you have enough context, answer the user clearly and cite sources by
@@ -306,9 +369,12 @@ agent_graph = build_agent_graph()
 # Public runner used by FastAPI
 # ---------------------------------------------------------------------------
 
-def run_agent(question: str) -> dict:
+def run_agent(
+    question: str,
+    history: Sequence[BaseMessage] | None = None,
+) -> dict:
     """
-    Execute the agent graph for a single user question.
+    Execute the agent graph for a user question with its conversation history.
 
     Returns:
         {
@@ -320,6 +386,7 @@ def run_agent(question: str) -> dict:
     initial: AgentState = {
         "messages": [
             SystemMessage(content=SYSTEM_PROMPT),
+            *(history or ()),
             HumanMessage(content=question),
         ],
         "sources": [],

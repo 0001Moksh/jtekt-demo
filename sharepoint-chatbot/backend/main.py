@@ -10,11 +10,13 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
 from agent_graph import run_agent
@@ -62,8 +64,14 @@ class SearchRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=10)
 
 
+class ChatHistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=20000)
+
+
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
+    history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=100)
 
 
 @app.get("/")
@@ -174,7 +182,13 @@ def chat(request: ChatRequest):
         )
 
     try:
-        result = run_agent(request.question)
+        history = [
+            HumanMessage(content=message.content)
+            if message.role == "user"
+            else AIMessage(content=message.content)
+            for message in request.history
+        ]
+        result = run_agent(request.question, history=history)
         return {
             "answer": result["answer"],
             "sources": result["sources"],

@@ -43,26 +43,42 @@ function DocumentPreview({ source, apiBaseUrl }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [container, setContainer] = useState(null);
+  const [pdfUrl, setPdfUrl] = useState("");
   const extension = source?.source_file?.split(".").pop()?.toLowerCase();
   const documentUrl = source
     ? `${apiBaseUrl}/documents/${encodeURIComponent(source.source_file)}`
     : "";
+  const excerpts = source?.chunks?.filter((chunk) => chunk.content) || [];
 
   useEffect(() => {
-    if (!documentUrl || extension !== "pptx" || !container) return undefined;
+    if (
+      !documentUrl
+      || !["pdf", "pptx"].includes(extension)
+      || (extension === "pptx" && !container)
+    ) return undefined;
     const controller = new AbortController();
     let viewer;
-    async function renderPresentation() {
+    let objectUrl;
+    async function loadDocument() {
+      setError("");
+      setLoading(true);
+      setPdfUrl("");
       try {
         const response = await fetch(documentUrl, { signal: controller.signal });
         if (!response.ok) {
           const detail = await response.json().catch(() => ({}));
-          throw new Error(detail.detail || "Could not load the presentation.");
+          throw new Error(detail.detail || "Could not load the original document.");
         }
-        const buffer = await response.arrayBuffer();
+        const blob = await response.blob();
         if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        if (extension === "pdf") {
+          setPdfUrl(objectUrl);
+          setLoading(false);
+          return;
+        }
         const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import("@aiden0z/pptx-renderer");
-        const openedViewer = await PptxViewer.open(buffer, container, {
+        const openedViewer = await PptxViewer.open(await blob.arrayBuffer(), container, {
           width: Math.max(280, container.clientWidth - 24),
           fitMode: "contain",
           zipLimits: RECOMMENDED_ZIP_LIMITS,
@@ -80,15 +96,16 @@ function DocumentPreview({ source, apiBaseUrl }) {
         setLoading(false);
       } catch (previewError) {
         if (!controller.signal.aborted) {
-          setError(previewError.message);
+          setError(previewError instanceof Error ? previewError.message : String(previewError));
           setLoading(false);
         }
       }
     }
-    renderPresentation();
+    loadDocument();
     return () => {
       controller.abort();
       viewer?.destroy();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [container, documentUrl, extension]);
 
@@ -102,15 +119,34 @@ function DocumentPreview({ source, apiBaseUrl }) {
         <strong title={source.source_file}>{source.source_file}</strong>
       </div>
       {extension === "pdf" ? (
-        <iframe className="pdf-preview" src={documentUrl} title={`Preview of ${source.source_file}`} />
+        <>
+          {loading && <p className="preview-status">Loading document…</p>}
+          {pdfUrl && <iframe className="pdf-preview" src={pdfUrl} title={`Preview of ${source.source_file}`} />}
+          {error && !excerpts.length && <p className="preview-error" role="alert">{error}</p>}
+        </>
       ) : extension === "pptx" ? (
         <>
           {loading && <p className="preview-status">Loading presentation…</p>}
-          {error && <p className="preview-error" role="alert">{error}</p>}
-          <div className="pptx-preview" ref={setContainer} />
+          {error && !excerpts.length && <p className="preview-error" role="alert">{error}</p>}
+          {!error && <div className="pptx-preview" ref={setContainer} />}
         </>
       ) : (
         <p className="preview-error">Preview is available for PDF and PowerPoint documents.</p>
+      )}
+      {error && excerpts.length > 0 && (
+        <div className="preview-excerpts">
+          <p className="preview-status">
+            Original file unavailable. Showing text extracted during indexing.
+          </p>
+          {excerpts.map((chunk, index) => (
+            <article className="preview-excerpt" key={chunk.id || `${chunk.location}-${index}`}>
+              {(chunk.location || chunk.section) && (
+                <strong>{[chunk.location, chunk.section].filter(Boolean).join(" · ")}</strong>
+              )}
+              <p>{chunk.content}</p>
+            </article>
+          ))}
+        </div>
       )}
     </section>
   );
@@ -487,7 +523,7 @@ export default function App() {
     setEditingId(null);
   }
 
-  async function ask(question, { addUser = true } = {}) {
+  async function ask(question, { addUser = true, history = messages } = {}) {
     if (!question || loading || !activeChat) return;
     const chatId = activeChat.id;
     if (addUser) {
@@ -505,7 +541,10 @@ export default function App() {
       const response = await fetch(`${API}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question })
+        body: JSON.stringify({
+          question,
+          history: history.map(({ role, content }) => ({ role, content }))
+        })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "The request could not be completed.");
@@ -531,11 +570,15 @@ export default function App() {
     if (loading || !activeChat) return;
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUser) return;
+    const lastAssistantIndex = messages.map((m) => m.role).lastIndexOf("assistant");
     updateChat(activeChat.id, (chat) => {
-      const idx = chat.messages.map((m) => m.role).lastIndexOf("assistant");
-      return { ...chat, messages: chat.messages.filter((_, i) => i !== idx) };
+      return {
+        ...chat,
+        messages: chat.messages.filter((_, i) => i !== lastAssistantIndex)
+      };
     });
-    ask(lastUser.content, { addUser: false });
+    const history = messages.filter((_, i) => i !== lastAssistantIndex);
+    ask(lastUser.content, { addUser: false, history });
   }
 
   async function copyText(text, id) {
