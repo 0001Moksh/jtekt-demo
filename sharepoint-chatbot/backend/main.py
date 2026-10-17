@@ -1,8 +1,12 @@
-from search_service import (
-    ingest_documents,
-    search_documents,
-    ingest_sharepoint_documents,
-)
+"""
+SharePoint Document Chatbot API – LangGraph agent edition.
+
+Graph: START -> agent <-> tools (rag_search, general_query) -> END
+LLM: Groq via LiteLLM gateway (LITELLM_MODEL / GROQ_API_KEY)
+"""
+
+from __future__ import annotations
+
 import os
 import re
 from pathlib import Path
@@ -12,23 +16,30 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from groq import Groq
 
-from search_service import ingest_documents, search_documents
-from rag_utils import SYSTEM_PROMPT, build_context, expand_source_citations
+from agent_graph import run_agent
+
+try:
+    from search_service import (
+        ingest_documents,
+        search_documents,
+        ingest_sharepoint_documents,
+    )
+except ImportError:
+    ingest_documents = None
+    search_documents = None
+    ingest_sharepoint_documents = None
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-documents_path = Path(
-    os.getenv("DOCUMENTS_DIR", "../documents")
-)
+documents_path = Path(os.getenv("DOCUMENTS_DIR", "../documents"))
 if not documents_path.is_absolute():
     documents_path = (BASE_DIR / documents_path).resolve()
 
 app = FastAPI(
-    title="SharePoint Document Chatbot API",
-    version="1.0.0",
+    title="SharePoint Document Chatbot API (LangGraph Agent)",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -46,7 +57,6 @@ app.add_middleware(
 )
 
 
-
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=5, ge=1, le=10)
@@ -59,8 +69,9 @@ class ChatRequest(BaseModel):
 @app.get("/")
 def root():
     return {
-        "message": "Document chatbot API is running",
+        "message": "Document chatbot API (LangGraph agent) is running",
         "docs": "/docs",
+        "graph": "START -> agent <-> tools -> END",
     }
 
 
@@ -83,7 +94,8 @@ def preview_document(filename: str):
     candidates = []
     documents_root = documents_path.resolve()
     candidates.extend(
-        path for path in documents_root.rglob(filename)
+        path
+        for path in documents_root.rglob(filename)
         if path.is_file() and path.resolve().is_relative_to(documents_root)
     )
 
@@ -91,7 +103,8 @@ def preview_document(filename: str):
     sharepoint_cache = BASE_DIR / ".cache" / "sharepoint"
     if sharepoint_cache.is_dir():
         candidates.extend(
-            path for path in sharepoint_cache.glob(f"*_{safe_name}")
+            path
+            for path in sharepoint_cache.glob(f"*_{safe_name}")
             if path.is_file()
             and path.resolve().is_relative_to(sharepoint_cache.resolve())
         )
@@ -119,6 +132,8 @@ def preview_document(filename: str):
 
 @app.post("/ingest")
 def ingest():
+    if ingest_documents is None:
+        raise HTTPException(status_code=501, detail="search_service not available")
     try:
         return ingest_documents(documents_path)
     except Exception as exc:
@@ -130,10 +145,10 @@ def ingest():
 
 @app.post("/search")
 def search(request: SearchRequest):
+    if search_documents is None:
+        raise HTTPException(status_code=501, detail="search_service not available")
     try:
-        results = search_documents(
-            request.query, request.top_k
-        )
+        results = search_documents(request.query, request.top_k)
         return {"query": request.query, "results": results}
     except Exception as exc:
         raise HTTPException(
@@ -144,58 +159,27 @@ def search(request: SearchRequest):
 
 @app.post("/chat")
 def chat(request: ChatRequest):
-    api_key = os.getenv("GROQ_API_KEY")
+    """
+    LangGraph agent endpoint.
+
+    Flow:
+      START -> agent (LiteLLM/Groq) <-> tools (rag_search | general_query)
+            -> loop until agent produces final answer -> END
+    """
+    api_key = os.getenv("GROQ_API_KEY") or os.getenv("LITELLM_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=503,
-            detail="GROQ_API_KEY is not configured",
+            detail="GROQ_API_KEY (or LITELLM_API_KEY) is not configured",
         )
 
     try:
-        sources = search_documents(request.question, top_k=10)
-
-        if not sources:
-            return {
-                "answer": "I could not find relevant information in the indexed documents.",
-                "sources": [],
-            }
-
-        context = build_context(sources)
-
-        client = Groq(api_key=api_key)
-        response = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
-            messages=[
-                {
-                    "role": "system",
-                    "content": SYSTEM_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Question:\n{request.question}\n\n"
-                        f"Document context:\n{context}"
-                    ),
-                },
-            ],
-        )
-        answer = response.choices[0].message.content or ""
-        try:
-            answer, citations = expand_source_citations(answer, sources)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=str(exc),
-            ) from exc
-
+        result = run_agent(request.question)
         return {
-            "answer": answer,
-            "sources": sources,
-            "citations": citations,
+            "answer": result["answer"],
+            "sources": result["sources"],
+            "citations": result.get("citations", []),
         }
-
-    except HTTPException:
-        raise
     except Exception as exc:
         raise HTTPException(
             status_code=500,
@@ -205,6 +189,8 @@ def chat(request: ChatRequest):
 
 @app.post("/sharepoint/sync")
 def sync_sharepoint():
+    if ingest_sharepoint_documents is None:
+        raise HTTPException(status_code=501, detail="search_service not available")
     try:
         return ingest_sharepoint_documents()
     except Exception as exc:
