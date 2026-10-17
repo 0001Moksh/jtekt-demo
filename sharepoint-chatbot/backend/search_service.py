@@ -569,6 +569,7 @@ def search_documents(query: str, top_k: int = 5) -> list[dict]:
             "location": result["location"],
             "section": result.get("section", ""),
             "chunk_id": result["chunk_id"],
+            "document_id": result.get("document_id", ""),
             "score": result.get("@search.score"),
             "reranker_score": result.get("@search.reranker_score"),
         }

@@ -130,11 +130,6 @@ def build_context(sources: list[dict]) -> str:
                 if source.get("section")
                 else None
             ),
-            (
-                f"URL: {source['source_url']}"
-                if source.get("source_url")
-                else None
-            ),
         ]
         citation = "; ".join(value for value in metadata if value)
         context.append(
@@ -156,23 +151,7 @@ def expand_source_citations(answer: str, sources: list[dict]) -> tuple[str, list
             )
         if source_number not in cited_indexes:
             cited_indexes.append(source_number)
-        source = sources[source_number - 1]
-        metadata = [
-            source.get("source_file"),
-            source.get("location"),
-            (
-                f"Section: {source['section']}"
-                if source.get("section")
-                else None
-            ),
-            (
-                f"URL: {source['source_url']}"
-                if source.get("source_url")
-                else None
-            ),
-        ]
-        citation = "; ".join(value for value in metadata if value)
-        return f"[Source {source_number}: {citation}]"
+        return f"[Source {source_number}]"
 
     expanded_answer = SOURCE_CITATION_PATTERN.sub(replace, answer)
     citations = [
@@ -187,6 +166,8 @@ def expand_source_citations(answer: str, sources: list[dict]) -> tuple[str, list
                     "section",
                     "source_url",
                     "chunk_id",
+                    "document_id",
+                    "content",
                 )
             },
         }

@@ -1,15 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useId } from "react";
 import ReactMarkdown from "react-markdown";
+import { createPortal } from "react-dom";
 import remarkGfm from "remark-gfm";
 import {
   Plus, MessageSquare, Send, FileText, PanelLeftClose, PanelLeft,
   PanelRightClose, PanelRight, Sparkles, Bot, User, AlertCircle,
-  ExternalLink, Trash2, Sun, Moon, Copy, Check, RefreshCw, ThumbsUp,
+  Trash2, Sun, Moon, Copy, Check, RefreshCw, ThumbsUp,
   ThumbsDown, Mic, Volume2, Square, Search, Pin, StickyNote, Download,
   Library, WandSparkles, X, ListChecks, CircleHelp, Clock, GraduationCap,
   BookOpen, Pencil, Eye
 } from "lucide-react";
 import "./App.css";
+import {
+  buildCitationMap,
+  citationPreviewLabel,
+  compactSourceGroups,
+  normalizeCitationMarkdown,
+  safeMarkdownUrl
+} from "./citationUtils";
 
 const API = import.meta.env.VITE_API_BASE_URL && !import.meta.env.DEV 
   ? import.meta.env.VITE_API_BASE_URL 
@@ -92,11 +100,6 @@ function DocumentPreview({ source, apiBaseUrl }) {
     <section className="document-preview">
       <div className="preview-heading">
         <strong title={source.source_file}>{source.source_file}</strong>
-        {source.source_url && (
-          <a href={source.source_url} target="_blank" rel="noreferrer" title="Open original document">
-            <ExternalLink size={15} />
-          </a>
-        )}
       </div>
       {extension === "pdf" ? (
         <iframe className="pdf-preview" src={documentUrl} title={`Preview of ${source.source_file}`} />
@@ -147,7 +150,187 @@ const makeChat = () => ({
   createdAt: Date.now()
 });
 
-function Typed({ text, fresh, onTick }) {
+function CitationBadge({ citationId, citation, theme }) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState(null);
+  const anchorRef = useRef(null);
+  const previewRef = useRef(null);
+  const closeTimer = useRef(null);
+  const wasOpenAtPointerDown = useRef(false);
+  const skipNextFocusOpen = useRef(false);
+  const previewId = useId();
+  const label = citationPreviewLabel(citation || {});
+
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+
+  function updatePosition() {
+    const anchor = anchorRef.current;
+    const preview = previewRef.current;
+    if (!anchor || !preview) return;
+
+    const margin = 12;
+    const gap = 10;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const width = Math.min(360, viewportWidth - margin * 2);
+    const height = Math.min(preview.scrollHeight, viewportHeight - margin * 2);
+    const rect = anchor.getBoundingClientRect();
+    let left;
+    let top;
+
+    if (rect.right + gap + width <= viewportWidth - margin) {
+      left = rect.right + gap;
+      top = Math.min(Math.max(margin, rect.top), viewportHeight - height - margin);
+    } else if (rect.left - gap - width >= margin) {
+      left = rect.left - gap - width;
+      top = Math.min(Math.max(margin, rect.top), viewportHeight - height - margin);
+    } else {
+      left = Math.min(
+        Math.max(margin, rect.left + rect.width / 2 - width / 2),
+        viewportWidth - width - margin
+      );
+      top = rect.bottom + gap + height <= viewportHeight - margin
+        ? rect.bottom + gap
+        : Math.max(margin, rect.top - gap - height);
+    }
+
+    setPosition({ left, top, width, maxHeight: viewportHeight - margin * 2 });
+  }
+
+  function showPreview() {
+    clearTimeout(closeTimer.current);
+    setOpen(true);
+  }
+
+  function scheduleClose() {
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => {
+      if (!previewRef.current?.contains(document.activeElement)) {
+        setOpen(false);
+      }
+    }, 180);
+  }
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    updatePosition();
+    const reposition = () => updatePosition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [open, citation?.content]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onPointerDown(event) {
+      if (
+        !anchorRef.current?.contains(event.target)
+        && !previewRef.current?.contains(event.target)
+      ) {
+        setOpen(false);
+      }
+    }
+    function onKeyDown(event) {
+      if (event.key === "Escape") {
+        setOpen(false);
+        if (document.activeElement !== anchorRef.current) {
+          skipNextFocusOpen.current = true;
+        }
+        anchorRef.current?.focus();
+      }
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        type="button"
+        className="citation-badge"
+        aria-label={`Preview ${citationId}${label ? `: ${label}` : ""}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={previewId}
+        onPointerEnter={(event) => {
+          if (event.pointerType === "mouse") showPreview();
+        }}
+        onPointerLeave={(event) => {
+          if (event.pointerType === "mouse") scheduleClose();
+        }}
+        onPointerDown={() => { wasOpenAtPointerDown.current = open; }}
+        onFocus={() => {
+          if (skipNextFocusOpen.current) {
+            skipNextFocusOpen.current = false;
+          } else {
+            showPreview();
+          }
+        }}
+        onBlur={(event) => {
+          if (!previewRef.current?.contains(event.relatedTarget)) scheduleClose();
+        }}
+        onClick={(event) => {
+          if (event.detail === 0) {
+            showPreview();
+          } else {
+            setOpen(!wasOpenAtPointerDown.current);
+          }
+        }}
+      >
+        {citationId}
+      </button>
+      {open && citation && createPortal(
+        <section
+          ref={previewRef}
+          id={previewId}
+          className="citation-preview"
+          data-theme={theme}
+          role="dialog"
+          aria-label={`${citationId} retrieved chunk preview`}
+          style={position || undefined}
+          onPointerEnter={(event) => {
+            if (event.pointerType === "mouse") clearTimeout(closeTimer.current);
+          }}
+          onPointerLeave={(event) => {
+            if (event.pointerType === "mouse") scheduleClose();
+          }}
+          onFocus={showPreview}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose();
+          }}
+        >
+          <div className="citation-preview-heading">
+            <div className="citation-preview-metadata" title={label}>
+              {label || citationId}
+            </div>
+            <button
+              type="button"
+              className="citation-preview-close"
+              aria-label="Close citation preview"
+              onClick={() => setOpen(false)}
+            >
+              <X size={15} />
+            </button>
+          </div>
+          <div className="citation-preview-content" tabIndex={0}>
+            {citation.content || "No retrieved chunk text is available for this citation."}
+          </div>
+        </section>,
+        document.body
+      )}
+    </>
+  );
+}
+
+function Typed({ text, fresh, onTick, citations, sources, theme }) {
   const [count, setCount] = useState(fresh ? 0 : text.length);
   useEffect(() => {
     if (!fresh) return;
@@ -163,8 +346,34 @@ function Typed({ text, fresh, onTick }) {
       onTick?.();
     }, 18);
     return () => clearInterval(timer);
-  }, [fresh, text]);
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text.slice(0, count)}</ReactMarkdown>;
+  }, [fresh, onTick, text]);
+  const citationMap = buildCitationMap(citations, sources);
+  const components = {
+    a: ({ href = "", children, ...props }) => {
+      if (href.startsWith("citation:")) {
+        let citationId = "";
+        try {
+          citationId = decodeURIComponent(href.slice("citation:".length));
+        } catch {
+          return <span className="citation-badge unavailable">{children}</span>;
+        }
+        const citation = citationMap.get(citationId);
+        return citation
+          ? <CitationBadge citationId={citationId} citation={citation} theme={theme} />
+          : <span className="citation-badge unavailable" aria-label={`${citationId} preview unavailable`}>{children}</span>;
+      }
+      return <a href={href} {...props}>{children}</a>;
+    }
+  };
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={components}
+      urlTransform={safeMarkdownUrl}
+    >
+      {normalizeCitationMarkdown(text.slice(0, count))}
+    </ReactMarkdown>
+  );
 }
 
 export default function App() {
@@ -197,21 +406,11 @@ export default function App() {
   const toastTimer = useRef(null);
 
   const activeChat = chats.find((c) => c.id === activeId) || chats[0];
-  const messages = activeChat?.messages || [];
+  const messages = useMemo(() => activeChat?.messages || [], [activeChat?.messages]);
   const lastAssistantId = [...messages].reverse().find((m) => m.role === "assistant")?.id;
 
   const sources = useMemo(() => {
-    const map = new Map();
-    messages.forEach((m) =>
-      (m.sources || []).forEach((s) => {
-        const key = s.source_file || s.source_url || "Source";
-        const entry = map.get(key) || { ...s, key, count: 0, locations: new Set() };
-        entry.count += 1;
-        if (s.location) entry.locations.add(s.location);
-        map.set(key, entry);
-      })
-    );
-    return [...map.values()];
+    return compactSourceGroups(messages.flatMap((message) => message.sources || []));
   }, [messages]);
 
   const filteredChats = chats.filter((c) => c.title.toLowerCase().includes(search.toLowerCase()));
@@ -315,6 +514,7 @@ export default function App() {
         role: "assistant",
         content: data.answer || "No answer was returned.",
         sources: Array.isArray(data.sources) ? data.sources : [],
+        citations: Array.isArray(data.citations) ? data.citations : [],
         followUps: Array.isArray(data.follow_ups) && data.follow_ups.length ? data.follow_ups : defaultFollowUps,
         fresh: true
       };
@@ -555,7 +755,14 @@ export default function App() {
                     <div className="message-author">{message.role === "assistant" ? "Document AI" : "You"}</div>
                     {message.role === "assistant" ? (
                       <div className="markdown-content">
-                        <Typed text={message.content} fresh={message.fresh} onTick={scrollBottom} />
+                        <Typed
+                          text={message.content}
+                          fresh={message.fresh}
+                          onTick={scrollBottom}
+                          citations={message.citations}
+                          sources={message.sources}
+                          theme={theme}
+                        />
                       </div>
                     ) : (
                       <div className="user-message">{message.content}</div>
@@ -596,15 +803,15 @@ export default function App() {
                         )}
                       </div>
                     )}
-                    {message.role === "assistant" && message.sources?.length > 0 && (
+                    {message.role === "assistant" && (message.citations?.length || message.sources?.length) > 0 && (
                       <div className="sources" style={{ marginTop: "8px" }}>
                         <div className="sources-title" style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", opacity: 0.8 }}>
                           <FileText size={14} /> Sources used
                         </div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                          {message.sources.map((source, index) => (
+                          {compactSourceGroups(message.citations?.length ? message.citations : message.sources).map((source) => (
                             <div
-                              key={`${source.source_file}-${source.location}-${index}`}
+                              key={source.key}
                               className="source-card neu-in"
                               style={{
                                 display: "inline-flex",
@@ -613,19 +820,24 @@ export default function App() {
                                 padding: "4px 8px",
                                 borderRadius: "6px",
                                 fontSize: "12px",
-                                maxWidth: "180px",
+                                maxWidth: "min(100%, 360px)",
                                 background: "rgba(0,0,0,0.03)"
                               }}
                             >
                               <FileText size={13} style={{ flexShrink: 0 }} />
-                              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                <span style={{ fontWeight: 500, display: "inline" }}>{source.source_file || `Source ${index + 1}`}</span>
+                              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={[
+                                source.source_file,
+                                source.locations.join(", "),
+                                ...source.sections
+                              ].filter(Boolean).join(" · ")}>
+                                <span style={{ fontWeight: 500, display: "inline" }}>
+                                  {[
+                                    source.source_file || "Source",
+                                    source.locations.join(", "),
+                                    ...source.sections.map((section) => `Section ${section}`)
+                                  ].filter(Boolean).join(" · ")}
+                                </span>
                               </div>
-                              {source.source_url && (
-                                <a href={source.source_url} target="_blank" rel="noreferrer" title="Open" style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-                                  <ExternalLink size={12} />
-                                </a>
-                              )}
                             </div>
                           ))}
                         </div>
@@ -731,14 +943,17 @@ export default function App() {
                   <div className="source-card neu" key={s.key}>
                     <div className="source-icon neu-in"><FileText size={16} /></div>
                     <div className="source-details">
-                      <strong>{s.key}</strong>
-                      <span>Cited {s.count}× {s.locations.size ? `· ${[...s.locations].slice(0, 2).join(", ")}` : ""}</span>
+                      <strong>{s.label}</strong>
+                      <span>{[
+                        s.locations.join(", "),
+                        ...s.sections.map((section) => `Section ${section}`)
+                      ].filter(Boolean).join(" · ")}</span>
                     </div>
                     <button
                       className="icon-button"
                       type="button"
-                      title={`Preview ${s.key}`}
-                      aria-label={`Preview ${s.key}`}
+                      title={`Preview ${s.label}`}
+                      aria-label={`Preview ${s.label}`}
                       onClick={() => {
                         setSelectedSource(s);
                         setTab("preview");
@@ -746,11 +961,6 @@ export default function App() {
                     >
                       <Eye size={15} />
                     </button>
-                    {s.source_url && (
-                      <a href={s.source_url} target="_blank" rel="noreferrer" title="Open source document">
-                        <ExternalLink size={15} />
-                      </a>
-                    )}
                   </div>
                 ))}
               </>

@@ -166,6 +166,43 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .markdown-content table { width: 100%; border-collapse: collapse; display: block; overflow-x: auto; }
 .markdown-content th, .markdown-content td { border-bottom: 1px solid var(--lo); padding: 9px 11px; text-align: left; }
 .markdown-content a { color: var(--accent); }
+.markdown-content .citation-badge {
+  display: inline-flex; align-items: center; vertical-align: baseline; margin: 0 2px;
+  padding: 1px 7px; border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent); font-size: 10px; font-weight: 700; line-height: 1.65;
+  cursor: pointer;
+}
+.markdown-content .citation-badge:hover,
+.markdown-content .citation-badge[aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.markdown-content .citation-badge.unavailable { cursor: default; opacity: .65; }
+.citation-preview {
+  position: fixed; z-index: 3000; display: flex; flex-direction: column; gap: 8px;
+  width: 360px; max-width: calc(100vw - 24px); padding: 12px;
+  border: 1px solid #d9deea; border-radius: 12px; background: #f7f8fc;
+  color: #2a303c; box-shadow: 0 12px 34px rgba(22, 28, 45, .24);
+}
+.citation-preview[data-theme="dark"] {
+  border-color: #454a59; background: #282c36; color: #e5e8ef;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .45);
+}
+.citation-preview-heading { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.citation-preview-metadata {
+  flex: 1; min-width: 0; color: inherit; font-size: 11px; font-weight: 700;
+  line-height: 1.5; overflow-wrap: anywhere;
+}
+.citation-preview-close {
+  flex: 0 0 auto; display: grid; place-items: center; padding: 3px;
+  border: 0; border-radius: 6px; background: transparent; color: inherit;
+}
+.citation-preview-close:hover { color: #5b6cff; background: rgba(91, 108, 255, .1); }
+.citation-preview-content {
+  overflow: auto; overscroll-behavior: contain; max-height: 340px;
+  padding: 10px; border-radius: 8px; background: rgba(0, 0, 0, .045);
+  color: inherit; font-size: 12px; line-height: 1.65; white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.citation-preview[data-theme="dark"] .citation-preview-content { background: rgba(0, 0, 0, .2); }
 
 .message-actions { display: flex; gap: 4px; margin-top: 12px; flex-wrap: wrap; }
 .followups { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }

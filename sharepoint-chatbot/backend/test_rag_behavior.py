@@ -99,7 +99,7 @@ class RetrievalBehaviorTests(unittest.TestCase):
         context = build_context([source])
         self.assertIn("[Source 1: document1.pdf; Page 3", context)
         self.assertIn(f"Section: {AUTOMATIC_SECTION}", context)
-        self.assertIn(source["source_url"], context)
+        self.assertNotIn(source["source_url"], context)
         self.assertIn(
             "available excerpts do not establish it",
             SYSTEM_PROMPT,
@@ -110,15 +110,22 @@ class RetrievalBehaviorTests(unittest.TestCase):
 
         answer, citations = expand_source_citations(
             "The excerpt does not establish the maximum temperature. "
-            "[Source 1]",
+            "[Source 1] [Source 1]",
             [source],
         )
-        self.assertIn("document1.pdf; Page 3", answer)
-        self.assertIn(f"Section: {AUTOMATIC_SECTION}", answer)
-        self.assertIn(source["source_url"], answer)
+        self.assertEqual(
+            answer,
+            "The excerpt does not establish the maximum temperature. "
+            "[Source 1] [Source 1]",
+        )
+        self.assertEqual(len(citations), 1)
         self.assertEqual(citations[0]["id"], "procedure-chunk")
         self.assertEqual(citations[0]["chunk_id"], "31")
         self.assertEqual(citations[0]["location"], "Page 3")
+        self.assertEqual(citations[0]["source_file"], "document1.pdf")
+        self.assertEqual(citations[0]["section"], AUTOMATIC_SECTION)
+        self.assertEqual(citations[0]["source_url"], source["source_url"])
+        self.assertEqual(citations[0]["content"], source["content"])
 
         with self.assertRaisesRegex(ValueError, "unavailable source 2"):
             expand_source_citations("Unsupported [Source 2]", [source])
