@@ -559,7 +559,10 @@ export default function App() {
       };
       updateChat(chatId, (chat) => ({ ...chat, messages: [...chat.messages, reply] }));
     } catch (err) {
-      setError(`${err.message}. Check that the FastAPI backend is running at ${API}.`);
+      const networkHint = err instanceof TypeError
+        ? ` Check that the FastAPI backend is running at ${API}.`
+        : "";
+      setError(`${err.message}${networkHint}`);
     } finally {
       setLoading(false);
       inputRef.current?.focus();

@@ -11,7 +11,9 @@ LLM goes through LiteLLM (Groq by default). Agent can call any tool any number o
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from typing import Annotated, Any, Literal, Sequence, TypedDict
 
 from langchain_core.messages import (
@@ -48,8 +50,11 @@ except ImportError:
 # Tools
 # ---------------------------------------------------------------------------
 
+logger = logging.getLogger(__name__)
+
+
 @tool
-def prepare_query(question: str, conversation_context: str) -> str:
+def prepare_query(question: str, conversation_context: str = "") -> str:
     """
     Turn a document question into a focused standalone search query.
     Use recent conversation context to resolve references such as "it",
@@ -87,8 +92,21 @@ def prepare_query(question: str, conversation_context: str) -> str:
         max_tokens=256,
     )
     query = response.choices[0].message.content
-    if not query or not query.strip():
-        raise RuntimeError("Query preparation returned no search query.")
+    if not isinstance(query, str) or not query.strip():
+        previous_user_turns = re.findall(
+            r"(?:^|\n)\s*(?:user|human)\s*:\s*(.+)",
+            conversation_context,
+            flags=re.IGNORECASE,
+        )
+        context = " ".join(previous_user_turns[-2:])
+        if not context:
+            context = conversation_context.strip()[-1000:]
+        fallback_query = " ".join(part for part in (context, question.strip()) if part)
+        logger.warning(
+            "Query preparation returned empty content; using conversation context "
+            "and the current question for document search."
+        )
+        return fallback_query or question.strip()
     return query.strip()
 
 

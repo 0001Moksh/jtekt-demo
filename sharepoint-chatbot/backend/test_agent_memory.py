@@ -69,6 +69,28 @@ class AgentThreadMemoryTests(unittest.TestCase):
             completion.call_args.kwargs["messages"][1]["content"],
         )
 
+    @patch("agent_graph.completion")
+    def test_prepare_query_falls_back_to_context_when_model_returns_empty(self, completion):
+        completion.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="  "))]
+        )
+
+        with self.assertLogs(agent_graph.logger, level="WARNING"):
+            query = prepare_query.invoke({
+                "question": "Summarize in 5 bullets",
+                "conversation_context": (
+                    "User: Explain the automatic startup procedure.\n"
+                    "Assistant: First select the operation mode.\n"
+                    "User: What happens after that?"
+                ),
+            })
+
+        self.assertEqual(
+            query,
+            "Explain the automatic startup procedure. What happens after that? "
+            "Summarize in 5 bullets",
+        )
+
     @patch("agent_graph.search_documents")
     def test_rag_search_exposes_source_metadata_for_preview(self, search_documents):
         search_documents.return_value = [{
