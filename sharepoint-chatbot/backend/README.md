@@ -14,10 +14,11 @@ example contains no usable credentials.
 | --- | --- | --- |
 | `LITELLM_GATEWAY_MODE` | `sdk` | `sdk` uses LiteLLM directly; `proxy` requires `LITELLM_PROXY_URL` and uses that URL for primary and fallback routes. |
 | `LITELLM_MODEL` | `groq/openai/gpt-oss-20b` | Primary tool-calling model. The provider must support the LiteLLM tool-call format and its corresponding provider credential must be configured. |
-| `LITELLM_FALLBACK_MODELS` | empty | Comma-separated model names attempted only after retryable primary failures. Availability and credentials are the operator's responsibility; routing decisions are logged. |
+| `LITELLM_FALLBACK_MODELS` | empty | Up to three comma-separated model names attempted only after retryable primary failures. Availability and credentials are the operator's responsibility; routing decisions are logged. |
 | `GROQ_API_KEY`, `LITELLM_API_KEY` | unset | Server-side provider credential; LiteLLM's shared key is accepted as a fallback. Other providers use their standard `<PROVIDER>_API_KEY` environment variable. |
 | `LITELLM_PROXY_URL`, `LITELLM_PROXY_API_KEY` | unset | Optional Proxy URL and server-side virtual key. |
-| `LITELLM_TIMEOUT` | `30` | Per-completion LiteLLM request timeout in seconds. |
+| `LITELLM_TIMEOUT` | `30` | LiteLLM read/write timeout per completion in seconds. |
+| `LITELLM_CONNECT_TIMEOUT` | `10` | LiteLLM connection/pool acquisition timeout in seconds. |
 | `LITELLM_MAX_RETRIES` | `2` | Bounded retries for timeouts, transient failures, and rate-limit/quota responses. Authentication and invalid-request errors are not retried. |
 | `LITELLM_MAX_OUTPUT_TOKENS` | `2048` | Maximum completion token request. |
 | `LITELLM_MAX_CONCURRENT_REQUESTS` | `10` | Gateway semaphore limit; read when the process starts. |
@@ -25,6 +26,8 @@ example contains no usable credentials.
 | `AGENT_MAX_INPUT_CHARS` | `2000` | Maximum question length. |
 | `AGENT_MAX_HISTORY_MESSAGES` | `12` | Maximum recent user/assistant history messages retained. |
 | `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Approximate combined question/history budget (estimated at four characters per token). |
+| `AGENT_MAX_TOTAL_CONTEXT_TOKENS` | `12000` | Approximate total question/history/retrieved-text budget. |
+| `AGENT_RESERVED_SYSTEM_TOKENS` | `2000` | Portion reserved for trusted instructions and tool schemas when limiting retrieval context. |
 | `AGENT_MAX_GRAPH_ITERATIONS` | `8` | Maximum agent model turns; the LangGraph recursion limit is also bounded. |
 | `AGENT_MAX_TOOL_CALLS` | `10` | Maximum attempted tool calls per request, including invalid calls. |
 | `AGENT_MAX_RAG_SEARCHES` | `3` | Maximum RAG calls per request. |
@@ -39,6 +42,7 @@ example contains no usable credentials.
 | `API_RATE_LIMIT_WINDOW_SECONDS` | `60` | Fixed-window rate limit duration. |
 | `REDIS_URL` | unset | Shared rate-limit store; required with `APP_ENV=production`. Without it, development uses a process-local limiter only. |
 | `PII_MODE` | `off` | `off`, `redact`, or `reject` for supported email, phone, and token patterns. |
+| `LOG_LEVEL` | `INFO` | Standard Python logging level used by the application. Configure retention in the deployment's logging sink. |
 | `AZURE_SEARCH_TIMEOUT_SECONDS` | `15` | Server-side Azure AI Search query timeout, also capped by the tool wait limit. |
 
 The current search backend returns hybrid relevance fields (`@search.score`
@@ -66,8 +70,8 @@ Run the backend unit tests from the same directory:
 python -m unittest discover -s . -p "test*.py" -v
 ```
 
-`/health` is a liveness check; `/ready` checks the selected model's basic
-credential/routing configuration. In production, configure Redis and set
+`/health` is a liveness check; `/ready` checks model credential/routing and
+search-service availability. In production, configure Redis and set
 `APP_ENV=production` before starting multiple workers.
 
 ## Operational limitations
@@ -75,9 +79,12 @@ credential/routing configuration. In production, configure Redis and set
 - Provider model availability and fallback credentials cannot be established
   offline; operators must verify every configured route and that it supports
   tool calls.
-- LiteLLM's configured `timeout` bounds each model request; the SDK is not
-  separately given a connection timeout because the installed SDK version is
-  not available for version-specific client construction in this workspace.
+- The gateway was validated against LiteLLM 1.106.0. The project requirement
+  remains `litellm>=1.50.0`; the gateway uses LiteLLM's `completion`,
+  `supports_function_calling`, disables LiteLLM internal retries with
+  `num_retries=0` in favor of its bounded retry loop, and uses OpenAI timeout
+  features. The capability checker is optional at runtime for SDK builds that
+  do not export it; those cases are logged as unverified.
 - Python cannot forcibly stop a synchronous tool running in a worker thread.
   The graph stops waiting after the tool limit, and Azure Search has its own
   server-side query timeout, but an unusually stuck SDK call may continue in

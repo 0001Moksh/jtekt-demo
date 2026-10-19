@@ -20,6 +20,7 @@ class GatewayTests(unittest.TestCase):
             "LITELLM_MODEL": "groq/openai/gpt-oss-20b",
             "GROQ_API_KEY": "unit-test-key",
             "LITELLM_TIMEOUT": "3",
+            "LITELLM_CONNECT_TIMEOUT": "2",
             "LITELLM_MAX_RETRIES": "1",
             "LITELLM_MAX_OUTPUT_TOKENS": "40",
             "LITELLM_ENABLE_COST_TRACKING": "true",
@@ -40,7 +41,8 @@ class GatewayTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(call.call_count, 2)
         self.assertEqual(call.call_args.kwargs["max_tokens"], 40)
-        self.assertEqual(call.call_args.kwargs["timeout"], 3)
+        self.assertEqual(call.call_args.kwargs["timeout"].read, 3)
+        self.assertEqual(call.call_args.kwargs["timeout"].connect, 2)
         self.assertEqual(call.call_args.kwargs["num_retries"], 0)
 
     def test_rate_limit_is_retried(self):
@@ -94,6 +96,16 @@ class GatewayTests(unittest.TestCase):
             options = llm_gateway._request_options("groq/model", {"messages": []})
         self.assertEqual(options["api_base"], "https://proxy.example.test")
         self.assertEqual(options["api_key"], "proxy-test-key")
+
+    def test_tool_calling_capability_is_checked_before_request(self):
+        llm_gateway._capability_cache.clear()
+        with patch.object(llm_gateway, "_supports_function_calling", return_value=False), patch.object(
+            llm_gateway,
+            "_litellm_completion",
+        ) as call:
+            with self.assertRaisesRegex(ValueError, "does not support tool calling"):
+                llm_gateway.completion(messages=[], tools=[{"type": "function"}])
+        call.assert_not_called()
 
     def test_missing_credentials_has_safe_configuration_error(self):
         with patch.dict(os.environ, {

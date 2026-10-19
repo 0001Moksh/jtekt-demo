@@ -43,6 +43,15 @@ except (ImportError, KeyError):
     ingest_sharepoint_documents = None
 
 logger = logging.getLogger(__name__)
+configured_log_level = getattr(
+    logging,
+    os.getenv("LOG_LEVEL", "INFO").strip().upper(),
+    None,
+)
+if isinstance(configured_log_level, int):
+    logging.getLogger().setLevel(configured_log_level)
+else:
+    logger.warning("Invalid LOG_LEVEL setting; using existing logging configuration")
 
 documents_path = Path(os.getenv("DOCUMENTS_DIR", "../documents"))
 if not documents_path.is_absolute():
@@ -116,9 +125,10 @@ class RequestSecurityMiddleware:
 
         if request.url.path == "/chat" and request.method == "POST":
             remote = request.client.host if request.client else "unknown"
+            rate_subject = hashlib.sha256(remote.encode()).hexdigest()
             bucket = int(time.time()) // _chat_rate_window
             if _redis_rate_client is not None:
-                key = "chat-rate:" + hashlib.sha256(remote.encode()).hexdigest() + f":{bucket}"
+                key = f"chat-rate:{rate_subject}:{bucket}"
                 try:
                     count = await _redis_rate_client.incr(key)
                     if count == 1:
@@ -150,7 +160,7 @@ class RequestSecurityMiddleware:
                     stale = [key for key in _local_rate_counts if key[1] < bucket - 1]
                     for key in stale:
                         _local_rate_counts.pop(key, None)
-                    rate_key = (remote, bucket)
+                    rate_key = (rate_subject, bucket)
                     _local_rate_counts[rate_key] = _local_rate_counts.get(rate_key, 0) + 1
                     count = _local_rate_counts[rate_key]
             if count > _chat_rate:
@@ -182,7 +192,8 @@ class RequestSecurityMiddleware:
             try:
                 await self._send_with_request_id(scope, receive, send, request_id)
             finally:
-                _chat_slots.release()
+                if not scope.get("state", {}).get("hold_chat_slot"):
+                    _chat_slots.release()
                 set_request_id(None)
             return
 
@@ -246,6 +257,19 @@ async def close_rate_limiter():
         await _redis_rate_client.aclose()
 
 
+def _release_chat_slot_when_done(worker_task: asyncio.Task, loop) -> None:
+    try:
+        error = worker_task.exception()
+    except asyncio.CancelledError:
+        error = None
+    if error is not None:
+        logger.error(
+            "Timed-out chat worker failed after the HTTP response",
+            extra={"error_category": type(error).__name__},
+        )
+    loop.call_soon_threadsafe(_chat_slots.release)
+
+
 @app.get("/")
 def root():
     return {
@@ -265,6 +289,8 @@ def ready():
     error = gateway_configuration_error()
     if error:
         raise HTTPException(status_code=503, detail=error)
+    if search_documents is None:
+        raise HTTPException(status_code=503, detail="Search service is not configured.")
     return {"status": "ready"}
 
 
@@ -377,10 +403,19 @@ async def chat(request: ChatRequest, http_request: Request):
         )
 
     try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(run_agent, question, history),
-            timeout=_request_timeout,
-        )
+        worker_task = asyncio.create_task(asyncio.to_thread(run_agent, question, history))
+        loop = asyncio.get_running_loop()
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(worker_task),
+                timeout=_request_timeout,
+            )
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            http_request.state.hold_chat_slot = True
+            worker_task.add_done_callback(
+                lambda completed: _release_chat_slot_when_done(completed, loop)
+            )
+            raise
         return {
             "answer": result["answer"],
             "sources": result["sources"],

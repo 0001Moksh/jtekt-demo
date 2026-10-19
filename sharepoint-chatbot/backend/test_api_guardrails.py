@@ -49,6 +49,12 @@ class ApiGuardrailTests(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 422)
 
+    def test_empty_question_is_rejected_before_missing_model_configuration(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with TestClient(main.app) as client:
+                response = client.post("/chat", json={"question": "   "})
+        self.assertEqual(response.status_code, 422)
+
     def test_chat_rate_limit_uses_client_address_not_forwarded_identity(self):
         with patch.object(main, "_chat_rate", 1), patch.object(main, "_chat_rate_window", 60):
             with patch.object(main, "run_agent", return_value={
@@ -75,6 +81,18 @@ class ApiGuardrailTests(unittest.TestCase):
                 response = client.post("/chat", json={"question": "What is 2+2?"})
         self.assertEqual(response.status_code, 502)
         self.assertNotIn("private filesystem path", response.text)
+
+    def test_chat_request_timeout_is_reported(self):
+        import time
+
+        with patch.object(main, "_request_timeout", 0.01), patch.object(
+            main,
+            "run_agent",
+            side_effect=lambda *args: time.sleep(0.1),
+        ):
+            with TestClient(main.app) as client:
+                response = client.post("/chat", json={"question": "What is 2+2?"})
+        self.assertEqual(response.status_code, 504)
 
 
 if __name__ == "__main__":

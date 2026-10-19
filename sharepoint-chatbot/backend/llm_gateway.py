@@ -10,13 +10,22 @@ import threading
 import time
 from contextvars import ContextVar
 from typing import Any
+from urllib.parse import urlsplit
 
 try:
     from litellm import completion as _litellm_completion
-    from litellm import supports_function_calling as _supports_function_calling
 except ImportError:
     _litellm_completion = None
+
+try:
+    from litellm import supports_function_calling as _supports_function_calling
+except ImportError:
     _supports_function_calling = None
+
+try:
+    from openai import Timeout as OpenAITimeout
+except ImportError:
+    OpenAITimeout = None
 
 logger = logging.getLogger(__name__)
 _request_id: ContextVar[str] = ContextVar("request_id", default="unknown")
@@ -91,6 +100,8 @@ def _models() -> tuple[str, list[str]]:
     if any(not route_pattern.fullmatch(model) for model in fallbacks):
         raise ValueError("LITELLM_FALLBACK_MODELS contains an invalid model route.")
     fallbacks = list(dict.fromkeys(model for model in fallbacks if model != primary))
+    if len(fallbacks) > 3:
+        raise ValueError("LITELLM_FALLBACK_MODELS supports at most three routes.")
     return primary, fallbacks
 
 
@@ -100,22 +111,42 @@ def gateway_configuration_error() -> str | None:
         return "LiteLLM is not installed."
     mode = os.getenv("LITELLM_GATEWAY_MODE", "sdk").strip().lower()
     if mode == "proxy":
-        if not os.getenv("LITELLM_PROXY_URL", "").strip():
+        proxy_url = os.getenv("LITELLM_PROXY_URL", "").strip()
+        parsed_url = urlsplit(proxy_url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
             return "LITELLM_PROXY_URL is required in proxy mode."
-        return None
-    if mode != "sdk":
+    elif mode != "sdk":
         return "LITELLM_GATEWAY_MODE must be sdk or proxy."
     try:
-        model, _ = _models()
+        model, fallbacks = _models()
     except ValueError as exc:
         return str(exc)
-    provider = model.split("/", 1)[0].upper().replace("-", "_")
-    key = os.getenv(f"{provider}_API_KEY") or os.getenv("LITELLM_API_KEY")
-    if not key:
-        return f"Configure {provider}_API_KEY or LITELLM_API_KEY for the selected model."
+    if mode == "sdk":
+        provider = model.split("/", 1)[0].upper().replace("-", "_")
+        key = os.getenv(f"{provider}_API_KEY") or os.getenv("LITELLM_API_KEY")
+        if provider.lower() in {"bedrock", "bedrock_converse"}:
+            key = key or (
+                os.getenv("AWS_ACCESS_KEY_ID")
+                and os.getenv("AWS_SECRET_ACCESS_KEY")
+            )
+        elif provider.lower() in {"vertex_ai", "vertex_ai_beta"}:
+            key = key or os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or os.getenv("VERTEXAI_PROJECT")
+        elif provider.lower() in {"ollama", "ollama_chat", "vllm", "lm_studio"}:
+            key = key or "local-provider"
+        if not key:
+            return f"Configure {provider}_API_KEY or LITELLM_API_KEY for the selected model."
+    try:
+        if float(os.getenv("LITELLM_TIMEOUT", "30")) <= 0:
+            return "LITELLM_TIMEOUT must be greater than zero."
+        if float(os.getenv("LITELLM_CONNECT_TIMEOUT", "10")) <= 0:
+            return "LITELLM_CONNECT_TIMEOUT must be greater than zero."
+    except ValueError:
+        return "LiteLLM timeout settings must be numeric."
     capability = _tool_call_capability(model)
     if capability is False:
         return "The configured LITELLM_MODEL does not support tool calling."
+    if any(_tool_call_capability(fallback) is False for fallback in fallbacks):
+        return "A configured LITELLM_FALLBACK_MODELS route does not support tool calling."
     return None
 
 
@@ -147,7 +178,8 @@ def _request_options(model: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("LITELLM_GATEWAY_MODE must be sdk or proxy.")
     if mode == "proxy":
         proxy_url = os.getenv("LITELLM_PROXY_URL", "").strip()
-        if not proxy_url:
+        parsed_url = urlsplit(proxy_url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
             raise ValueError("LITELLM_PROXY_URL is required in proxy mode.")
         options["api_base"] = proxy_url
         proxy_key = os.getenv("LITELLM_PROXY_API_KEY") or os.getenv("LITELLM_API_KEY")
@@ -164,8 +196,18 @@ def _request_options(model: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         if provider_key or shared_key:
             options["api_key"] = provider_key or shared_key
 
-    timeout = float(os.getenv("LITELLM_TIMEOUT", "30"))
-    options["timeout"] = max(0.1, timeout)
+    timeout = max(0.1, float(os.getenv("LITELLM_TIMEOUT", "30")))
+    connect_timeout = max(0.1, float(os.getenv("LITELLM_CONNECT_TIMEOUT", "10")))
+    options["timeout"] = (
+        OpenAITimeout(
+            connect=connect_timeout,
+            read=timeout,
+            write=timeout,
+            pool=connect_timeout,
+        )
+        if OpenAITimeout is not None
+        else timeout
+    )
     options["model"] = model
     output_limit = _int_setting("LITELLM_MAX_OUTPUT_TOKENS", 2048)
     requested_tokens = options.pop("max_completion_tokens", None)

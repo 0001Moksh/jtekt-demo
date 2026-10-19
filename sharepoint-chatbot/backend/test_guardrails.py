@@ -48,9 +48,10 @@ class InputGuardrailTests(unittest.TestCase):
         self.assertIn("risk signal", logs.output[0])
 
     def test_pii_is_optionally_redacted_or_rejected(self):
-        with patch.dict(os.environ, {"PII_MODE": "redact"}):
+        with patch.dict(os.environ, {"PII_MODE": "redact"}), self.assertLogs("guardrails", level="INFO") as logs:
             question, _ = validate_request("Contact me at person@example.com")
         self.assertIn("[REDACTED]", question)
+        self.assertNotIn("person@example.com", "\n".join(logs.output))
 
         with patch.dict(os.environ, {"PII_MODE": "reject"}):
             with self.assertRaisesRegex(ValueError, "sensitive pattern"):
