@@ -233,7 +233,10 @@ def _log_usage(response: Any, model: str) -> None:
     }
     if _bool_setting("LITELLM_ENABLE_COST_TRACKING"):
         hidden = getattr(response, "_hidden_params", {}) or {}
-        fields["estimated_cost"] = hidden.get("response_cost")
+        cost = hidden.get("response_cost")
+        if cost is None:
+            cost = getattr(response, "_response_cost", None)
+        fields["estimated_cost"] = cost
     logger.info("LLM usage", extra=fields)
 
 

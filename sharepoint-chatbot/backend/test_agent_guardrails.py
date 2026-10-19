@@ -29,6 +29,14 @@ def state(question, tool_calls=(), **overrides):
 
 
 class AgentGuardrailTests(unittest.TestCase):
+    def test_ordinary_prompt_injection_question_is_not_blocked_or_forced_to_rag(self):
+        self.assertFalse(agent_graph._document_question("What is prompt injection?"))
+        self.assertTrue(
+            agent_graph._document_question(
+                "What does our policy say about prompt injection?"
+            )
+        )
+
     def test_mandatory_retrieval_runs_query_preparation_before_search(self):
         retrieval = json.dumps({
             "found": True,

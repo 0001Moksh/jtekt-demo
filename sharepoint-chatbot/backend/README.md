@@ -59,7 +59,7 @@ Set-Location .\backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 # Edit .env and provide the required Azure Search and model-provider settings.
 python -m uvicorn main:app --host 0.0.0.0 --port 8003
 ```

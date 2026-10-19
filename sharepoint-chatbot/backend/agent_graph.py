@@ -69,6 +69,16 @@ def _int_setting(name: str, default: int) -> int:
 
 
 def _document_question(question: str) -> bool:
+    document_specific = re.search(
+        r"\b(?:according to|in (?:the|our) (?:document|file|manual|policy)|"
+        r"company|policy|procedure|manual|sharepoint|presentation|pdf|pptx|"
+        r"indexed|document|documents)\b",
+        question,
+        re.IGNORECASE,
+    )
+    if document_specific:
+        return True
+
     clearly_general = re.search(
         r"\b(?:general knowledge|in general|without (?:using|consulting) "
         r"(?:the )?documents?)\b",
@@ -83,14 +93,14 @@ def _document_question(question: str) -> bool:
     )
     if clearly_general:
         return False
-    if re.search(
-        r"\b(?:according to|in (?:the|our) (?:document|file|manual|policy)|"
-        r"company|policy|procedure|manual|sharepoint|presentation|pdf|pptx|"
-        r"indexed|document|documents)\b",
+    general_security_concept = re.search(
+        r"\b(?:what is|define|explain|describe|how does)\s+"
+        r"(?:a |an |the )?(?:prompt injection|jailbreak|prompt extraction)\b",
         question,
         re.IGNORECASE,
-    ):
-        return True
+    )
+    if general_security_concept:
+        return False
     conversational = re.fullmatch(
         r"\s*(?:hi|hello|hey|thanks|thank you|good morning|good afternoon)[!. ]*\s*",
         question,
