@@ -28,6 +28,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 from agent_graph import run_agent
+from guardrails import validate_request
 from llm_gateway import gateway_configuration_error, set_request_id
 
 try:
@@ -153,6 +154,10 @@ class RequestSecurityMiddleware:
                     _local_rate_counts[rate_key] = _local_rate_counts.get(rate_key, 0) + 1
                     count = _local_rate_counts[rate_key]
             if count > _chat_rate:
+                logger.warning(
+                    "Chat request rate limit exceeded",
+                    extra={"request_id": request_id, "outcome": "rate_limited"},
+                )
                 response = JSONResponse(
                     {"detail": "Too many chat requests. Please try again later."},
                     status_code=429,
@@ -185,14 +190,30 @@ class RequestSecurityMiddleware:
         set_request_id(None)
 
     async def _send_with_request_id(self, scope, receive, send, request_id):
+        started = time.monotonic()
+        response_status = None
+
         async def send_with_id(message):
+            nonlocal response_status
             if message["type"] == "http.response.start":
+                response_status = message["status"]
                 headers = list(message.get("headers", []))
                 headers.append((b"x-request-id", request_id.encode("ascii")))
                 message["headers"] = headers
             await send(message)
 
-        await self.app(scope, receive, send_with_id)
+        try:
+            await self.app(scope, receive, send_with_id)
+        finally:
+            logger.info(
+                "HTTP request completed",
+                extra={
+                    "request_id": request_id,
+                    "method": scope["method"],
+                    "status_code": response_status,
+                    "latency_ms": round((time.monotonic() - started) * 1000),
+                },
+            )
 
 
 app.add_middleware(RequestSecurityMiddleware)
@@ -337,6 +358,17 @@ async def chat(request: ChatRequest, http_request: Request):
       START -> agent (LiteLLM/Groq) <-> tools (rag_search | general_query)
             -> loop until agent produces final answer -> END
     """
+    try:
+        history = [
+            HumanMessage(content=message.content)
+            if message.role == "user"
+            else AIMessage(content=message.content)
+            for message in request.history
+        ]
+        question, history = validate_request(request.question, history)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     configuration_error = gateway_configuration_error()
     if configuration_error:
         raise HTTPException(
@@ -345,14 +377,8 @@ async def chat(request: ChatRequest, http_request: Request):
         )
 
     try:
-        history = [
-            HumanMessage(content=message.content)
-            if message.role == "user"
-            else AIMessage(content=message.content)
-            for message in request.history
-        ]
         result = await asyncio.wait_for(
-            asyncio.to_thread(run_agent, request.question, history),
+            asyncio.to_thread(run_agent, question, history),
             timeout=_request_timeout,
         )
         return {
