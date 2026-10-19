@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 import hashlib
@@ -30,6 +31,8 @@ from document_processor import (
     stable_document_id,
 )
 from rag_utils import rerank_search_results
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -525,6 +528,21 @@ def search_documents(query: str, top_k: int = 5) -> list[dict]:
     if not query.strip():
         raise ValueError("Query cannot be empty")
 
+    try:
+        search_timeout = max(
+            1,
+            min(
+                int(os.getenv("AZURE_SEARCH_TIMEOUT_SECONDS", "15")),
+                int(os.getenv("AGENT_MAX_TOOL_DURATION_SECONDS", "20")),
+            ),
+        )
+    except ValueError:
+        logger.warning(
+            "Invalid Azure Search timeout setting; using default",
+            extra={"setting": "AZURE_SEARCH_TIMEOUT_SECONDS"},
+        )
+        search_timeout = 15
+
     candidate_count = min(50, max(20, top_k * 5))
     vector = embedding_model.encode(
         query, normalize_embeddings=True
@@ -546,6 +564,7 @@ def search_documents(query: str, top_k: int = 5) -> list[dict]:
     results = search_client.search(
         search_text=query,
         vector_queries=[vector_query],
+        timeout=search_timeout,
         select=[
             "id",
             "content",

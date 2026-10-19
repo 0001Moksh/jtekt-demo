@@ -1,4 +1,5 @@
 import json
+import logging
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -75,7 +76,7 @@ class AgentThreadMemoryTests(unittest.TestCase):
             choices=[SimpleNamespace(message=SimpleNamespace(content="  "))]
         )
 
-        with self.assertLogs(agent_graph.logger, level="WARNING"):
+        with self.assertLogs(logging.getLogger("agent_graph"), level="WARNING"):
             query = prepare_query.invoke({
                 "question": "Summarize in 5 bullets",
                 "conversation_context": (
