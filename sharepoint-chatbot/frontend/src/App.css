@@ -138,6 +138,29 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .suggestion-card svg { flex-shrink: 0; color: var(--accent); transition: transform .25s; }
 .suggestion-card:hover svg { transform: translateX(4px) rotate(-8deg); }
 
+.demo-scenarios {
+  margin-top: 30px; padding: 20px; border-radius: 20px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg));
+  box-shadow: var(--raise-sm);
+}
+.demo-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.demo-heading > svg { color: var(--accent); flex: 0 0 auto; margin-top: 4px; }
+.demo-eyebrow { color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.demo-heading h2 { margin: 5px 0 0; font-size: 17px; line-height: 1.35; }
+.demo-lead { margin: 9px 0 16px; color: var(--mute); font-size: 12px; line-height: 1.6; }
+.demo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.demo-card {
+  display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px;
+  border-radius: 14px; text-align: left; color: var(--text); transition: transform .2s, box-shadow .2s;
+}
+.demo-card:hover:not(:disabled) { transform: translateY(-2px); }
+.demo-card > svg:first-child { flex: 0 0 auto; color: var(--accent); }
+.demo-card > svg:last-child { flex: 0 0 auto; color: var(--mute); }
+.demo-card-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.demo-card-copy small { color: var(--accent); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.demo-card-copy strong { color: var(--text); font-size: 12px; line-height: 1.35; }
+.demo-card-copy > span { color: var(--mute); font-size: 10.5px; line-height: 1.42; }
+
 .message-list { max-width: 840px; margin: 0 auto; padding: 18px 24px 36px; }
 .message-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 30px; animation: rise .45s ease both; }
 .avatar {
@@ -336,6 +359,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .welcome { margin-top: 5vh; }
   .suggestion-grid { grid-template-columns: 1fr; }
   .suggestion-card { min-height: 66px; }
+  .demo-grid { grid-template-columns: 1fr; }
   .message-list { padding: 18px 12px; }
   .composer-area { padding: 8px 10px 13px; }
 }
