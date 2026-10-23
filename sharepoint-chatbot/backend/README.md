@@ -93,9 +93,10 @@ search-service availability. In production, configure Redis and set
   thread. Keep model/tool timeouts bounded and configure the reverse proxy's
   request timeout consistently.
 - Prompt-injection screening uses WhyLabs LangKit's bundled jailbreak-theme
-  similarity detector. It needs the local embedding model on first use but no
-  remote reference dataset; if screening is unavailable, chat requests fail
-  closed. Configure `LANGKIT_JAILBREAK_THRESHOLD` according to observed
-  false-positive rates. `LANGKIT_INJECTION_THRESHOLD` is accepted temporarily
-  for backward compatibility.
+  similarity detector with project-owned examples in
+  `langkit_security_themes.json`. It needs the local embedding model on first
+  use but no remote reference dataset; if screening is unavailable, chat
+  requests fail closed. Configure `LANGKIT_JAILBREAK_THRESHOLD` according to
+  observed false-positive rates. `LANGKIT_INJECTION_THRESHOLD` is accepted
+  temporarily for backward compatibility.
   LangSmith tracing is not enabled or required by this project.

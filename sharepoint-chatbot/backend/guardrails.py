@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from collections.abc import Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -11,6 +12,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from llm_gateway import get_request_id
 
 logger = logging.getLogger(__name__)
+_themes_initialized = False
+
+LANGKIT_THEME_FILE = Path(__file__).with_name("langkit_security_themes.json")
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -47,6 +51,11 @@ def _langkit_jailbreak_score(prompt: str) -> float:
         # Unlike LangKit's injections module, themes uses the jailbreak
         # examples bundled with the package and does not fetch S3 assets.
         from langkit import themes
+
+        global _themes_initialized
+        if not _themes_initialized:
+            themes.init(theme_file_path=str(LANGKIT_THEME_FILE))
+            _themes_initialized = True
 
         score = float(themes.group_similarity(prompt, "jailbreak"))
     except Exception as exc:
@@ -90,10 +99,10 @@ def validate_request(
     if estimated_tokens > token_limit:
         _reject("context_limit", "Question and conversation history exceed the context limit.")
 
-    # The model receives retained history beside the current question, so screen
-    # that exact untrusted context rather than only the latest turn.
-    candidate = "\n".join([question, *(m.content for m in bounded_history)])
-    score = _langkit_jailbreak_score(candidate)
+    # Screen the new user instruction only. Scoring all earlier turns could
+    # dilute the score of a current attack or make a later safe follow-up inherit
+    # an earlier blocked message.
+    score = _langkit_jailbreak_score(question)
     threshold = jailbreak_threshold()
     if score >= threshold:
         logger.warning(
