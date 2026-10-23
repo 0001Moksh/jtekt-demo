@@ -825,7 +825,7 @@ export default function App() {
                 Get answers grounded in your indexed SharePoint PDFs and PowerPoint files,
                 with source references you can open, save and export.
               </p>
-              <div className="suggestion-grid">
+              {/* <div className="suggestion-grid">
                 {suggestions.map((suggestion, i) => (
                   <button
                     className="suggestion-card neu-btn"
@@ -838,7 +838,7 @@ export default function App() {
                     <Send size={15} />
                   </button>
                 ))}
-              </div>
+              </div> */}
               <section className="demo-scenarios" aria-labelledby="demo-scenarios-title">
                 <div className="demo-heading">
                   <div>
