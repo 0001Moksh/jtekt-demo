@@ -19,6 +19,13 @@ class ApiGuardrailTests(unittest.TestCase):
         self.addCleanup(self.env.stop)
         main._redis_rate_client = None
         main._local_rate_counts.clear()
+        self.validation_gate = patch.object(
+            main,
+            "validate_request",
+            side_effect=lambda question, history=None: (question, list(history or [])),
+        )
+        self.validation_gate.start()
+        self.addCleanup(self.validation_gate.stop)
 
     def test_chat_preserves_compatibility_response_and_propagates_request_id(self):
         payload = {
@@ -50,6 +57,7 @@ class ApiGuardrailTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
     def test_empty_question_is_rejected_before_missing_model_configuration(self):
+        self.validation_gate.stop()
         with patch.dict(os.environ, {}, clear=True):
             with TestClient(main.app) as client:
                 response = client.post("/chat", json={"question": "   "})

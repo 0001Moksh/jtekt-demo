@@ -1,10 +1,9 @@
-"""Deterministic validation and privacy controls for agent requests."""
+"""LangKit-backed request validation for the document agent."""
 
 from __future__ import annotations
 
 import logging
 import os
-import re
 from collections.abc import Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -12,18 +11,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from llm_gateway import get_request_id
 
 logger = logging.getLogger(__name__)
-
-INJECTION_PATTERNS = (
-    re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions\b", re.I),
-    re.compile(r"\b(?:reveal|print|repeat|show)\s+(?:the\s+)?(?:system prompt|hidden instructions)\b", re.I),
-    re.compile(r"\b(?:jailbreak|developer mode|DAN mode)\b", re.I),
-    re.compile(r"<\s*/?\s*system\s*>", re.I),
-)
-PII_PATTERNS = (
-    re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I),
-    re.compile(r"(?<!\w)(?:\+?\d[\d ()-]{7,}\d)(?!\w)"),
-    re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|Bearer\s+[A-Za-z0-9._~+/-]+=*)\b", re.I),
-)
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -38,11 +25,42 @@ def max_question_length() -> int:
     return _positive_int("AGENT_MAX_INPUT_CHARS", 2000)
 
 
+def injection_threshold() -> float:
+    """Return the LangKit score at which a request is rejected."""
+    try:
+        threshold = float(os.getenv("LANGKIT_INJECTION_THRESHOLD", "0.70"))
+    except ValueError:
+        _reject("invalid_langkit_threshold", "LANGKIT_INJECTION_THRESHOLD must be a number from -1 to 1.")
+    if not -1 <= threshold <= 1:
+        _reject("invalid_langkit_threshold", "LANGKIT_INJECTION_THRESHOLD must be a number from -1 to 1.")
+    return threshold
+
+
+def _langkit_injection_score(prompt: str) -> float:
+    """Run LangKit's injection similarity detector for one untrusted prompt."""
+    try:
+        # Importing this module initializes LangKit's local embedding model and
+        # known-injection embedding set.
+        from langkit import injections
+
+        scores = injections.injection({"prompt": [prompt]})
+        score = float(scores[0])
+    except Exception as exc:
+        logger.exception(
+            "LangKit injection detector unavailable",
+            extra={"request_id": get_request_id(), "error_category": type(exc).__name__},
+        )
+        _reject("langkit_unavailable", "Safety screening is temporarily unavailable. Please try again later.")
+    if not -1 <= score <= 1:
+        _reject("invalid_langkit_score", "Safety screening returned an invalid result.")
+    return score
+
+
 def validate_request(
     question: str,
     history: Sequence[BaseMessage] | None = None,
 ) -> tuple[str, list[BaseMessage]]:
-    """Validate request shape and bound history before constructing the graph."""
+    """Validate request shape, bound context, and reject LangKit-detected injections."""
     if not isinstance(question, str) or not question.strip():
         _reject("empty_question", "Question must not be empty.")
     if len(question) > max_question_length():
@@ -68,43 +86,33 @@ def validate_request(
     if estimated_tokens > token_limit:
         _reject("context_limit", "Question and conversation history exceed the context limit.")
 
-    combined = "\n".join([question, *(m.content for m in bounded_history)])
-    if any(pattern.search(combined) for pattern in INJECTION_PATTERNS):
+    # The model receives retained history beside the current question, so screen
+    # that exact untrusted context rather than only the latest turn.
+    candidate = "\n".join([question, *(m.content for m in bounded_history)])
+    score = _langkit_injection_score(candidate)
+    threshold = injection_threshold()
+    if score >= threshold:
         logger.warning(
-            "Prompt-injection risk signal detected; request allowed with untrusted-input handling",
-            extra={"request_id": get_request_id(), "guardrail": "prompt_injection_risk"},
+            "Request rejected by LangKit injection guardrail",
+            extra={
+                "request_id": get_request_id(),
+                "guardrail": "langkit_injection",
+                "score": score,
+                "threshold": threshold,
+            },
         )
+        _reject("langkit_injection", "Request was blocked by the safety policy.")
 
-    privacy_mode = os.getenv("PII_MODE", "off").strip().lower()
-    if privacy_mode not in {"off", "redact", "reject"}:
-        _reject("invalid_pii_mode", "PII_MODE must be off, redact, or reject.")
-    if privacy_mode != "off":
-        detected = any(pattern.search(combined) for pattern in PII_PATTERNS)
-        if detected and privacy_mode == "reject":
-            _reject("pii_rejected", "Request contains a sensitive pattern that is not accepted.")
-        if detected:
-            question = _redact(question)
-            bounded_history = [
-                type(message)(content=_redact(message.content))
-                for message in bounded_history
-            ]
-            logger.info(
-                "Sensitive patterns redacted from request",
-                extra={"request_id": get_request_id(), "guardrail": "pii_redacted"},
-            )
-
+    logger.info(
+        "LangKit injection screening passed",
+        extra={
+            "request_id": get_request_id(),
+            "guardrail": "langkit_injection",
+            "score": score,
+            "threshold": threshold,
+        },
+    )
     return question.strip(), bounded_history
-
-
-def _redact(text: str) -> str:
-    for pattern in PII_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
-    return text
-
-
-def redact_sensitive_text(text: str) -> str:
-    """Redact the supported PII/credential patterns from generated output."""
-    return _redact(text)
 
 
 def _reject(reason: str, message: str) -> None:

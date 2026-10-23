@@ -29,6 +29,15 @@ def state(question, tool_calls=(), **overrides):
 
 
 class AgentGuardrailTests(unittest.TestCase):
+    def setUp(self):
+        self.validation_gate = patch.object(
+            agent_graph,
+            "validate_request",
+            side_effect=lambda question, history=None: (question, list(history or [])),
+        )
+        self.validation_gate.start()
+        self.addCleanup(self.validation_gate.stop)
+
     def test_ordinary_prompt_injection_question_is_not_blocked_or_forced_to_rag(self):
         self.assertFalse(agent_graph._document_question("What is prompt injection?"))
         self.assertTrue(
@@ -353,7 +362,6 @@ class AgentGuardrailTests(unittest.TestCase):
     def test_answer_output_redacts_known_key_and_filesystem_path(self):
         with patch.dict(os.environ, {
             "GROQ_API_KEY": "unit-secret-value",
-            "PII_MODE": "off",
         }):
             answer = agent_graph._sanitize_answer(
                 "Key unit-secret-value at " + str(agent_graph.Path(agent_graph.__file__).resolve().parent)

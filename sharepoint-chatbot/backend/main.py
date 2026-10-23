@@ -403,7 +403,9 @@ async def chat(request: ChatRequest, http_request: Request):
         )
 
     try:
-        worker_task = asyncio.create_task(asyncio.to_thread(run_agent, question, history))
+        worker_task = asyncio.create_task(
+            asyncio.to_thread(run_agent, question, history, already_validated=True)
+        )
         loop = asyncio.get_running_loop()
         try:
             result = await asyncio.wait_for(

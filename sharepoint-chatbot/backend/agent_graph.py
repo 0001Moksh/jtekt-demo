@@ -831,6 +831,8 @@ def _mandatory_retrieval(
 def run_agent(
     question: str,
     history: Sequence[BaseMessage] | None = None,
+    *,
+    already_validated: bool = False,
 ) -> dict:
     """
     Execute the agent graph for a user question with its conversation history.
@@ -842,7 +844,10 @@ def run_agent(
             "citations": list
         }
     """
-    question, history = validate_request(question, history)
+    if already_validated:
+        history = list(history or [])
+    else:
+        question, history = validate_request(question, history)
     context_tokens = (
         len(question) + sum(len(message.content) for message in history) + 3
     ) // 4
@@ -987,8 +992,4 @@ def _sanitize_answer(answer: str) -> str:
         flags=re.IGNORECASE,
     )
     answer = answer[:_int_setting("AGENT_MAX_OUTPUT_CHARS", 12000)]
-    if os.getenv("PII_MODE", "off").lower() == "redact":
-        from guardrails import redact_sensitive_text
-
-        answer = redact_sensitive_text(answer)
     return answer[:_int_setting("AGENT_MAX_OUTPUT_CHARS", 12000)]
