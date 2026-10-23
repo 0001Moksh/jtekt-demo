@@ -25,29 +25,33 @@ def max_question_length() -> int:
     return _positive_int("AGENT_MAX_INPUT_CHARS", 2000)
 
 
-def injection_threshold() -> float:
-    """Return the LangKit score at which a request is rejected."""
+def jailbreak_threshold() -> float:
+    """Return the LangKit jailbreak-similarity score at which to reject."""
     try:
-        threshold = float(os.getenv("LANGKIT_INJECTION_THRESHOLD", "0.70"))
+        threshold = float(
+            os.getenv(
+                "LANGKIT_JAILBREAK_THRESHOLD",
+                os.getenv("LANGKIT_INJECTION_THRESHOLD", "0.70"),
+            )
+        )
     except ValueError:
-        _reject("invalid_langkit_threshold", "LANGKIT_INJECTION_THRESHOLD must be a number from -1 to 1.")
+        _reject("invalid_langkit_threshold", "LANGKIT_JAILBREAK_THRESHOLD must be a number from -1 to 1.")
     if not -1 <= threshold <= 1:
-        _reject("invalid_langkit_threshold", "LANGKIT_INJECTION_THRESHOLD must be a number from -1 to 1.")
+        _reject("invalid_langkit_threshold", "LANGKIT_JAILBREAK_THRESHOLD must be a number from -1 to 1.")
     return threshold
 
 
-def _langkit_injection_score(prompt: str) -> float:
-    """Run LangKit's injection similarity detector for one untrusted prompt."""
+def _langkit_jailbreak_score(prompt: str) -> float:
+    """Run LangKit's bundled jailbreak-theme similarity detector."""
     try:
-        # Importing this module initializes LangKit's local embedding model and
-        # known-injection embedding set.
-        from langkit import injections
+        # Unlike LangKit's injections module, themes uses the jailbreak
+        # examples bundled with the package and does not fetch S3 assets.
+        from langkit import themes
 
-        scores = injections.injection({"prompt": [prompt]})
-        score = float(scores[0])
+        score = float(themes.group_similarity(prompt, "jailbreak"))
     except Exception as exc:
         logger.exception(
-            "LangKit injection detector unavailable",
+            "LangKit jailbreak detector unavailable",
             extra={"request_id": get_request_id(), "error_category": type(exc).__name__},
         )
         _reject("langkit_unavailable", "Safety screening is temporarily unavailable. Please try again later.")
@@ -60,7 +64,7 @@ def validate_request(
     question: str,
     history: Sequence[BaseMessage] | None = None,
 ) -> tuple[str, list[BaseMessage]]:
-    """Validate request shape, bound context, and reject LangKit-detected injections."""
+    """Validate request shape, bound context, and reject LangKit jailbreaks."""
     if not isinstance(question, str) or not question.strip():
         _reject("empty_question", "Question must not be empty.")
     if len(question) > max_question_length():
@@ -89,25 +93,25 @@ def validate_request(
     # The model receives retained history beside the current question, so screen
     # that exact untrusted context rather than only the latest turn.
     candidate = "\n".join([question, *(m.content for m in bounded_history)])
-    score = _langkit_injection_score(candidate)
-    threshold = injection_threshold()
+    score = _langkit_jailbreak_score(candidate)
+    threshold = jailbreak_threshold()
     if score >= threshold:
         logger.warning(
-            "Request rejected by LangKit injection guardrail",
+            "Request rejected by LangKit jailbreak guardrail",
             extra={
                 "request_id": get_request_id(),
-                "guardrail": "langkit_injection",
+                "guardrail": "langkit_jailbreak",
                 "score": score,
                 "threshold": threshold,
             },
         )
-        _reject("langkit_injection", "Request was blocked by the safety policy.")
+        _reject("langkit_jailbreak", "Request was blocked by the safety policy.")
 
     logger.info(
-        "LangKit injection screening passed",
+        "LangKit jailbreak screening passed",
         extra={
             "request_id": get_request_id(),
-            "guardrail": "langkit_injection",
+            "guardrail": "langkit_jailbreak",
             "score": score,
             "threshold": threshold,
         },

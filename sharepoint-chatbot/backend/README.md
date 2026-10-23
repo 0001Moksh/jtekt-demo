@@ -41,7 +41,7 @@ example contains no usable credentials.
 | `API_RATE_LIMIT_REQUESTS` | `20` | Chat requests allowed for a client IP per window. |
 | `API_RATE_LIMIT_WINDOW_SECONDS` | `60` | Fixed-window rate limit duration. |
 | `REDIS_URL` | unset | Shared rate-limit store; required with `APP_ENV=production`. Without it, development uses a process-local limiter only. |
-| `LANGKIT_INJECTION_THRESHOLD` | `0.70` | Requests whose LangKit injection similarity score is at or above this value are rejected. Valid range: -1–1. |
+| `LANGKIT_JAILBREAK_THRESHOLD` | `0.70` | Requests whose LangKit jailbreak-similarity score is at or above this value are rejected. Valid range: -1–1. |
 | `LOG_LEVEL` | `INFO` | Standard Python logging level used by the application. Configure retention in the deployment's logging sink. |
 | `AZURE_SEARCH_TIMEOUT_SECONDS` | `15` | Server-side Azure AI Search query timeout, also capped by the tool wait limit. |
 
@@ -92,8 +92,10 @@ search-service availability. In production, configure Redis and set
 - Cancelling the HTTP wait does not terminate an already-running Python worker
   thread. Keep model/tool timeouts bounded and configure the reverse proxy's
   request timeout consistently.
-- Prompt-injection screening uses WhyLabs LangKit's injection similarity
-  detector. It requires its local embedding model and reference embeddings on
-  first use; if screening is unavailable, chat requests fail closed. Configure
-  `LANGKIT_INJECTION_THRESHOLD` according to observed false-positive rates.
+- Prompt-injection screening uses WhyLabs LangKit's bundled jailbreak-theme
+  similarity detector. It needs the local embedding model on first use but no
+  remote reference dataset; if screening is unavailable, chat requests fail
+  closed. Configure `LANGKIT_JAILBREAK_THRESHOLD` according to observed
+  false-positive rates. `LANGKIT_INJECTION_THRESHOLD` is accepted temporarily
+  for backward compatibility.
   LangSmith tracing is not enabled or required by this project.
