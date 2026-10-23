@@ -266,6 +266,24 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 
 /* ---------- Composer ---------- */
 .composer-area { padding: 10px 22px 18px; }
+.composer-suggestions {
+  max-width: 840px; margin: 0 auto 10px; display: flex; align-items: center; gap: 10px;
+  min-width: 0;
+}
+.composer-suggestions-label { flex: 0 0 auto; color: var(--mute); font-size: 10.5px; font-weight: 700; }
+.composer-suggestion-list {
+  display: flex; flex: 1; gap: 8px; min-width: 0; overflow-x: auto; padding: 2px;
+  scrollbar-width: thin;
+}
+.composer-suggestion {
+  display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent); color: var(--accent);
+  font-size: 11px; font-weight: 700; transition: background .2s, transform .2s;
+}
+.composer-suggestion:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 15%, transparent); transform: translateY(-1px); }
+.composer-suggestion.security { border-color: color-mix(in srgb, var(--ok) 38%, transparent); color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.composer-suggestion.security:hover:not(:disabled) { background: color-mix(in srgb, var(--ok) 16%, transparent); }
 .composer {
   max-width: 840px; margin: 0 auto; display: flex; align-items: flex-end; gap: 12px;
   padding: 11px 12px 11px 20px; border-radius: 22px; transition: box-shadow .3s;
@@ -362,6 +380,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .demo-grid { grid-template-columns: 1fr; }
   .message-list { padding: 18px 12px; }
   .composer-area { padding: 8px 10px 13px; }
+  .composer-suggestions { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .composer-suggestion-list { width: 100%; }
 }
 @media (max-width: 600px) {
   .sidebar { position: absolute; z-index: 6; height: 100%; background: var(--bg); box-shadow: 10px 0 30px color-mix(in srgb, var(--lo) 60%, transparent); }

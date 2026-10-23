@@ -204,6 +204,13 @@ const demoScenarios = [
   }
 ];
 
+const composerPrompts = [
+  { label: "Automatic startup", prompt: demoScenarios[0].prompt },
+  { label: "C-Ring root cause", prompt: demoScenarios[1].prompt },
+  { label: "Worm shaft actions", prompt: demoScenarios[2].prompt },
+  { label: "Security test", prompt: demoScenarios[3].prompt, security: true }
+];
+
 const studioTools = [
   { icon: BookOpen, label: "Briefing doc", prompt: "Create a briefing document: key themes, important facts and conclusions from the documents." },
   { icon: GraduationCap, label: "Study guide", prompt: "Create a study guide with key terms, short-answer questions and an answer key." },
@@ -576,8 +583,10 @@ export default function App() {
   async function ask(question, { addUser = true, history = messages } = {}) {
     if (!question || loading || !activeChat) return;
     const chatId = activeChat.id;
+    let userMessageId;
     if (addUser) {
       const userMessage = { id: uuid(), role: "user", content: question };
+      userMessageId = userMessage.id;
       updateChat(chatId, (chat) => ({
         ...chat,
         title: chat.messages.length ? chat.title : question.slice(0, 42),
@@ -597,7 +606,11 @@ export default function App() {
         })
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "The request could not be completed.");
+      if (!response.ok) {
+        const requestError = new Error(data.detail || "The request could not be completed.");
+        requestError.status = response.status;
+        throw requestError;
+      }
       const reply = {
         id: uuid(),
         role: "assistant",
@@ -609,10 +622,20 @@ export default function App() {
       };
       updateChat(chatId, (chat) => ({ ...chat, messages: [...chat.messages, reply] }));
     } catch (err) {
+      const blockedBySafetyPolicy = err?.status === 422
+        && /blocked by the safety policy/i.test(err.message);
+      if (blockedBySafetyPolicy && userMessageId) {
+        updateChat(chatId, (chat) => ({
+          ...chat,
+          messages: chat.messages.filter((message) => message.id !== userMessageId)
+        }));
+      }
       const networkHint = err instanceof TypeError
         ? ` Check that the FastAPI backend is running at ${API}.`
         : "";
-      setError(`${err.message}${networkHint}`);
+      setError(blockedBySafetyPolicy
+        ? "Security test blocked by LangKit before it reached the document agent."
+        : `${err.message}${networkHint}`);
     } finally {
       setLoading(false);
       inputRef.current?.focus();
@@ -1004,6 +1027,23 @@ export default function App() {
         </section>
 
         <footer className="composer-area">
+          <section className="composer-suggestions" aria-label="Suggested demo prompts">
+            <span className="composer-suggestions-label">Try a demo</span>
+            <div className="composer-suggestion-list">
+              {composerPrompts.map(({ label, prompt, security }) => (
+                <button
+                  key={label}
+                  type="button"
+                  className={`composer-suggestion ${security ? "security" : ""}`}
+                  disabled={loading}
+                  onClick={() => runDemoScenario(prompt)}
+                >
+                  {security && <ShieldCheck size={13} aria-hidden="true" />}
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
           <form
             className="composer neu-in"
             onSubmit={(e) => { e.preventDefault(); ask(input.trim()); }}
